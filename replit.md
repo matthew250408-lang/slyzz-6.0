@@ -1,6 +1,6 @@
 # Slyzz 6.0 — Bot Discord
 
-Bot Discord configurable pour gérer les inscriptions des membres et les conversations de modmail.
+Bot Discord configurable pour gérer le recrutement, les conversations de modmail et les annonces du staff.
 
 ## Run & Operate
 
@@ -36,10 +36,11 @@ Bot Discord configurable pour gérer les inscriptions des membres et les convers
 
 ## Product
 
-- Administrators configure a registration embed, button, questions, and response channel.
-- Members submit their application through a Discord modal.
+- Les administrateurs configurent le formulaire de recrutement : embed, bouton, questions préconfigurées ou personnalisées et salon de réception.
+- Les candidats envoient leur candidature via un formulaire Discord.
 - Members can open support conversations through modmail; moderators can claim, reply, and close conversations.
-- Authorized users can publish custom embeds with `/message`; `/info-bot` displays the bot version, developer, and last-modified date.
+- Authorized users can publish custom embeds with `/message`; `/info-bot` displays the bot version, developer, and last-modified date; `/info-serveur` summarizes the current server.
+- `/absence-staff date_debut date_fin raison` announces the invoking staff member's absence. Only members with role `1429508546550038648` can use it.
 - `/rank-derank` lets an authorized user choose `rank` or `derank`, changes the configured role, and posts an announcement embed in the configured announcement channel.
 
 ### Custom embeds
@@ -59,6 +60,12 @@ The command is limited to the primary administrators and users authorized for th
 ### Rank and derank
 
 `/rank-derank` takes an `action` choice (`rank` or `derank`), a member, a `role` to add/remove, and a reason. It posts the rank/derank embed in channel `1542655357728456855`; the message above the embed mentions the affected member and the notification role `1429508546550038648`, while the embed includes the selected role in the action copy. The footer identifies the command author and shows their avatar. Rank and derank use Markdown H2 headings, the specified French copy, and quoted member/reason lines with `<:utilisateur:1558391260375556097>` and `<:raison:1558391410498084925>`; use `<:rank:1558389911625662544>` for rank and `<:derank:1558389778406440991>` for derank. Access is limited to members with role `1429494599730335765`, server administrators, and the server owner. Biscotto needs **Manage Roles**, permission to send embeds and mention the notification role in the announcement channel, and a role hierarchy above the target role and member.
+
+### Recrutement et absences
+
+- `/setup-inscription` conserve son nom pour compatibilité, mais configure le formulaire de recrutement. Il permet de personnaliser le message, le titre, le bouton, jusqu'à cinq questions et le salon qui reçoit les candidatures. Les questions de motivation, d'expérience, de disponibilité et de gestion des conflits sont proposées avec les questions personnalisées.
+- `/absence-staff date_debut date_fin raison` publie dans le salon courant un embed rose avec le membre qui lance la commande, son rôle le plus élevé, les dates au format `JJ/MM/AAAA` et la raison.
+- `/info-serveur` affiche le propriétaire, le nombre de membres, les dates et les principaux compteurs du serveur.
 
 ## User preferences
 

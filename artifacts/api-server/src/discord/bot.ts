@@ -31,9 +31,11 @@ import {
   DEFAULT_BUTTON_LABEL,
   DEFAULT_MESSAGE,
   AUTHORIZED_SETUP_USER_IDS,
+  OKAY_EMOJI_NAME,
   RANK_COMMAND_ACCESS_ROLE_ID,
   RANK_ANNOUNCEMENT_CHANNEL_ID,
   RANK_ANNOUNCEMENT_ROLE_ID,
+  STAFF_ABSENCE_ACCESS_ROLE_ID,
   customQuestionKey,
   isCustomQuestionKey,
   questionLabel,
@@ -45,8 +47,10 @@ import {
   commandsHelpEmbed,
   permissionsEmbed,
   rankActionEmbed,
+  serverInfoEmbed,
   setupEmbed,
   successEmbed,
+  staffAbsenceEmbed,
 } from "./embeds";
 import { REGISTRATION_BUTTON_ID, syncRegistrationMessage } from "./message";
 import {
@@ -79,6 +83,8 @@ const SETUP_PERMISSION_COMMAND_NAME = "setup-permission";
 const MESSAGE_COMMAND_NAME = "message";
 const BOT_INFO_COMMAND_NAME = "info-bot";
 const RANK_DERANK_COMMAND_NAME = "rank-derank";
+const SERVER_INFO_COMMAND_NAME = "info-serveur";
+const STAFF_ABSENCE_COMMAND_NAME = "absence-staff";
 
 function addSetupOptions(command: SlashCommandBuilder) {
   return command
@@ -100,7 +106,7 @@ function addSetupOptions(command: SlashCommandBuilder) {
     .addStringOption((option) =>
       option
         .setName("titre")
-        .setDescription("Titre de l'embed d'inscription")
+        .setDescription("Titre de l'embed de recrutement")
         .setMinLength(1)
         .setMaxLength(256)
         .setRequired(false),
@@ -125,7 +131,7 @@ function addSetupOptions(command: SlashCommandBuilder) {
 const setupCommand = addSetupOptions(
   new SlashCommandBuilder()
     .setName("setup-inscription")
-    .setDescription("Configure le système d'inscription"),
+    .setDescription("Configure le système de recrutement personnalisable"),
 );
 
 const setupPermissionCommand = new SlashCommandBuilder()
@@ -141,7 +147,7 @@ const setupPermissionCommand = new SlashCommandBuilder()
 
 const sendFormCommand = new SlashCommandBuilder()
   .setName(SEND_FORM_COMMAND_NAME)
-  .setDescription("Envoie le formulaire d'inscription dans ce salon");
+  .setDescription("Envoie le formulaire de recrutement dans ce salon");
 
 const messageCommand = new SlashCommandBuilder()
   .setName(MESSAGE_COMMAND_NAME)
@@ -208,6 +214,34 @@ const messageCommand = new SlashCommandBuilder()
 const botInfoCommand = new SlashCommandBuilder()
   .setName(BOT_INFO_COMMAND_NAME)
   .setDescription("Affiche la version et les informations de Biscotto");
+
+const serverInfoCommand = new SlashCommandBuilder()
+  .setName(SERVER_INFO_COMMAND_NAME)
+  .setDescription("Affiche les informations de ce serveur");
+
+const staffAbsenceCommand = new SlashCommandBuilder()
+  .setName(STAFF_ABSENCE_COMMAND_NAME)
+  .setDescription("Annonce une absence du staff")
+  .addStringOption((option) =>
+    option
+      .setName("date_debut")
+      .setDescription("Date de début au format JJ/MM/AAAA")
+      .setRequired(true),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("date_fin")
+      .setDescription("Date de fin au format JJ/MM/AAAA")
+      .setRequired(true),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("raison")
+      .setDescription("Raison de l'absence")
+      .setMinLength(1)
+      .setMaxLength(1000)
+      .setRequired(true),
+  );
 
 const rankDerankCommand = new SlashCommandBuilder()
   .setName(RANK_DERANK_COMMAND_NAME)
@@ -308,7 +342,7 @@ function titleModal(title: string): ModalBuilder {
 function messageModal(content: string): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`${SETUP_PREFIX}message-modal`)
-    .setTitle("Message d'inscription")
+    .setTitle("Message de recrutement")
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -627,7 +661,7 @@ async function handleSendFormCommand(
       embeds: [
         errorEmbed(
           "Accès refusé",
-          "Tu n'es pas autorisé à envoyer le formulaire.",
+          "Tu n'es pas autorisé à publier le formulaire de recrutement.",
         ),
       ],
       ephemeral: true,
@@ -656,7 +690,7 @@ async function handleSendFormCommand(
       embeds: [
         errorEmbed(
           "Formulaire non configuré",
-          "Configure au moins une question avec `/setup-inscription` avant d'envoyer le formulaire.",
+          "Configure au moins une question de candidature avec `/setup-inscription` avant de publier le recrutement.",
         ),
       ],
       ephemeral: true,
@@ -673,8 +707,8 @@ async function handleSendFormCommand(
   await interaction.editReply({
     embeds: [
       successEmbed(
-        "Formulaire envoyé",
-        `Le formulaire a été envoyé dans <#${message.channelId}>.\n[Ouvrir le message](${message.url})`,
+        "Recrutement publié",
+        `Le formulaire de candidature a été publié dans <#${message.channelId}>.\n[Ouvrir le message](${message.url})`,
       ),
     ],
   });
@@ -759,6 +793,168 @@ async function handleBotInfoCommand(
   await interaction.reply({
     embeds: [botInfoEmbed()],
     allowedMentions: { parse: [] },
+  });
+}
+
+async function handleServerInfoCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Commande indisponible",
+          "Cette commande doit être utilisée dans un serveur.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const owner = await guild.fetchOwner().catch(() => null);
+  if (!owner) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Informations indisponibles",
+          "Impossible de récupérer le propriétaire du serveur.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [serverInfoEmbed(guild, owner.user)],
+    allowedMentions: { parse: [] },
+  });
+}
+
+function parseFrenchDate(value: string): Date | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+async function handleStaffAbsenceCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Commande indisponible",
+          "Cette commande doit être utilisée dans un serveur.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Vérification impossible",
+          "Impossible de vérifier tes rôles dans ce serveur.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (!member.roles.cache.has(STAFF_ABSENCE_ACCESS_ROLE_ID)) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Accès refusé",
+          `Cette commande est réservée aux membres ayant le rôle <@&${STAFF_ABSENCE_ACCESS_ROLE_ID}>.`,
+        ),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  const startDateText = interaction.options.getString("date_debut", true).trim();
+  const endDateText = interaction.options.getString("date_fin", true).trim();
+  const reason = interaction.options.getString("raison", true).trim();
+  const startDate = parseFrenchDate(startDateText);
+  const endDate = parseFrenchDate(endDateText);
+
+  if (!startDate || !endDate) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Date invalide",
+          "Les dates doivent être réelles et au format JJ/MM/AAAA, par exemple 05/11/2026.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (startDate.getTime() > endDate.getTime()) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Période invalide",
+          "La date de début doit être antérieure ou égale à la date de fin.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (!reason) {
+    await interaction.editReply({
+      embeds: [errorEmbed("Raison manquante", "Indique une raison non vide.")],
+    });
+    return;
+  }
+
+  await interaction.followUp({
+    embeds: [staffAbsenceEmbed(member, startDateText, endDateText, reason)],
+    allowedMentions: {
+      parse: [],
+      users: [member.id],
+    },
+    ephemeral: false,
+  });
+  await interaction.editReply({
+    embeds: [
+      successEmbed(
+        "Absence annoncée",
+        "Ton absence a été publiée dans ce salon.",
+      ),
+    ],
   });
 }
 
@@ -1038,6 +1234,9 @@ async function handleRoleActionCommand(
           targetRole,
           interaction.user,
           reason,
+          guild.emojis.cache.find(
+            (emoji) => emoji.name?.toLowerCase() === OKAY_EMOJI_NAME,
+          )?.toString() ?? "👌",
         ),
       ],
       allowedMentions: {
@@ -1096,7 +1295,7 @@ async function syncAfterSetup(
   );
   return successEmbed(
     "Configuration enregistrée",
-    "Le message d'inscription a été mis à jour.",
+    "Le message de recrutement a été mis à jour.",
   );
 }
 
@@ -1267,7 +1466,7 @@ async function handleModalSubmit(
         successEmbed(
           newLabels.length > 1 ? "Questions ajoutées" : "Question ajoutée",
           availableSlots >= newLabels.length
-            ? `**${newLabels.length} questions** ont été enregistrées et ajoutées au formulaire.`
+            ? `**${newLabels.length} questions** ont été enregistrées et ajoutées au recrutement.`
             : `**${newLabels.length} questions** ont été enregistrées. Discord limite le formulaire à 5 questions ; les questions restantes sont disponibles dans le menu après avoir retiré une question.`,
         ),
       ],
@@ -1285,7 +1484,7 @@ async function handleModalSubmit(
       embeds: [
         errorEmbed(
           "Formulaire indisponible",
-          "Le salon de réception n'est pas encore configuré. Demande à un administrateur d'utiliser `/setup-inscription` puis le sélecteur de salon.",
+          "Le salon de réception des candidatures n'est pas encore configuré. Demande à un administrateur d'utiliser `/setup-inscription` puis le sélecteur de salon.",
         ),
       ],
     });
@@ -1365,7 +1564,7 @@ async function handleQuestionsSelection(
       embeds: [
         errorEmbed(
           "Trop de questions",
-          "Discord permet au maximum 5 questions dans un formulaire.",
+          "Discord permet au maximum 5 questions dans un formulaire de candidature.",
         ),
       ],
       components: [],
@@ -1385,7 +1584,7 @@ async function handleQuestionsSelection(
     embeds: [
       successEmbed(
         "Questions enregistrées",
-        "Le message d'inscription a été mis à jour.",
+        "Le message de recrutement a été mis à jour.",
       ),
     ],
     components: [],
@@ -1448,7 +1647,7 @@ function memberRegistrationModal(
 ): ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(MEMBER_MODAL_ID)
-    .setTitle("Formulaire d'inscription");
+    .setTitle("Candidature de recrutement");
 
   for (const [index, questionId] of questionIds.entries()) {
     modal.addComponents(
@@ -1511,6 +1710,8 @@ export async function startDiscordBot(token: string): Promise<void> {
       sendFormCommand.toJSON(),
       messageCommand.toJSON(),
       botInfoCommand.toJSON(),
+      serverInfoCommand.toJSON(),
+      staffAbsenceCommand.toJSON(),
       rankDerankCommand.toJSON(),
     ];
 
@@ -1561,6 +1762,10 @@ export async function startDiscordBot(token: string): Promise<void> {
           await handleSendEmbedCommand(interaction);
         } else if (interaction.commandName === BOT_INFO_COMMAND_NAME) {
           await handleBotInfoCommand(interaction);
+        } else if (interaction.commandName === SERVER_INFO_COMMAND_NAME) {
+          await handleServerInfoCommand(interaction);
+        } else if (interaction.commandName === STAFF_ABSENCE_COMMAND_NAME) {
+          await handleStaffAbsenceCommand(interaction);
         } else if (interaction.commandName === RANK_DERANK_COMMAND_NAME) {
           await handleRoleActionCommand(interaction);
         }
@@ -1731,7 +1936,7 @@ export async function startDiscordBot(token: string): Promise<void> {
             embeds: [
               errorEmbed(
                 "Formulaire indisponible",
-                "Le formulaire n'est pas encore configuré.",
+                "Le formulaire de recrutement n'est pas encore configuré.",
               ),
             ],
             ephemeral: true,

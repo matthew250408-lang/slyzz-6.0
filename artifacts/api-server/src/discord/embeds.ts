@@ -1,11 +1,19 @@
-import { EmbedBuilder, type Role, type User } from "discord.js";
+import {
+  EmbedBuilder,
+  type Guild,
+  type GuildMember,
+  type Role,
+  type User,
+} from "discord.js";
 import {
   AUTHORIZED_SETUP_USER_IDS,
   BOT_DEVELOPER_ID,
   BOT_LAST_MODIFIED,
   BOT_VERSION,
+  DATE_EMOJI,
   DERANK_EMOJI,
   DEFAULT_EMBED_TITLE,
+  HIGHEST_ROLE_EMOJI,
   MEMBER_EMOJI,
   RANK_EMOJI,
   REASON_EMOJI,
@@ -41,17 +49,92 @@ export function botInfoEmbed(): EmbedBuilder {
     );
 }
 
+export function serverInfoEmbed(guild: Guild, owner: User): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle(`Informations sur ${guild.name}`)
+    .addFields(
+      { name: "Propriétaire", value: `<@${owner.id}>`, inline: true },
+      { name: "Membres", value: guild.memberCount.toLocaleString("fr-FR"), inline: true },
+      {
+        name: "Créé le",
+        value: guild.createdAt.toLocaleDateString("fr-FR"),
+        inline: true,
+      },
+      {
+        name: "Salons",
+        value: guild.channels.cache.size.toLocaleString("fr-FR"),
+        inline: true,
+      },
+      {
+        name: "Rôles",
+        value: Math.max(0, guild.roles.cache.size - 1).toLocaleString("fr-FR"),
+        inline: true,
+      },
+      {
+        name: "Niveau de boost",
+        value: guild.premiumTier.toString(),
+        inline: true,
+      },
+      { name: "Identifiant", value: `\`${guild.id}\``, inline: false },
+    )
+    .setTimestamp();
+
+  const iconURL = guild.iconURL({ size: 512 });
+  if (iconURL) {
+    embed.setThumbnail(iconURL);
+  }
+
+  return embed;
+}
+
+export function staffAbsenceEmbed(
+  member: GuildMember,
+  startDate: string,
+  endDate: string,
+  reason: string,
+): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle("Absence du staff")
+    .addFields(
+      {
+        name: "Membre",
+        value: `${MEMBER_EMOJI} <@${member.id}>`,
+        inline: false,
+      },
+      {
+        name: "Rôle le plus élevé",
+        value: `${HIGHEST_ROLE_EMOJI} <@&${member.roles.highest.id}>`,
+        inline: false,
+      },
+      {
+        name: "Date",
+        value: `${DATE_EMOJI} du ${startDate} au ${endDate}`,
+        inline: false,
+      },
+      {
+        name: "Raison",
+        value: `${REASON_EMOJI} ${reason.trim()}`,
+        inline: false,
+      },
+    )
+    .setThumbnail(member.displayAvatarURL())
+    .setTimestamp();
+}
+
 export function rankActionEmbed(
   action: "rank" | "derank",
   member: User,
   role: Role,
   actor: User,
   reason: string,
+  okayEmoji = "👌",
 ): EmbedBuilder {
   const isRank = action === "rank";
   const heading = isRank
-    ? `${RANK_EMOJI} Rank-Up !`
-    : `${DERANK_EMOJI} Derank !`;
+    ? `${okayEmoji} ${RANK_EMOJI} Rank-Up !`
+    : `${okayEmoji} ${DERANK_EMOJI} Derank !`;
   const actionLines = isRank
     ? [
         `**Félicitations**, tu disposes désormais du **grade** <@&${role.id}> !`,
@@ -116,11 +199,11 @@ export function setupEmbed(
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
     .setDescription(
-      "Utilise les paramètres de la commande ou les contrôles ci-dessous pour modifier le **message**, le **titre de l'embed**, le **bouton**, les **questions** et le **salon de réponses**.",
+      "Configure ici le formulaire de **recrutement** : son **message**, son **titre**, son **bouton**, ses **questions** et le **salon de réception**.",
     )
     .addFields(
       {
-        name: "Message d'inscription",
+        name: "Message de recrutement",
         value: truncate(config.messageContent, 1024),
         inline: false,
       },
@@ -130,12 +213,12 @@ export function setupEmbed(
         inline: true,
       },
       {
-        name: "Bouton d'inscription",
+        name: "Bouton de candidature",
         value: truncate(config.buttonLabel, 1024),
         inline: true,
       },
       {
-        name: "Questions du formulaire",
+        name: "Questions de candidature",
         value:
           truncate(
             config.questions.map(questionLabel).join(", "),
@@ -215,7 +298,7 @@ export function applicationEmbed(
 ): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("Nouvelle inscription")
+    .setTitle("Nouvelle candidature au recrutement")
     .setDescription(`Candidature envoyée par <@${user.id}>`)
     .addFields(
       {

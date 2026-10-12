@@ -93,8 +93,8 @@ function discordTime(date: Date): string {
 
 function maintenanceEndText(date: Date | null): string {
   return date
-    ? `Fin prévue : ${discordTime(date)}`
-    : "Aucune date de fin — remise en ligne manuelle avec /maintenance.";
+    ? `**Fin prévue :** ${discordTime(date)}`
+    : "**Fin :** manuelle — à terminer avec `/maintenance`.";
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -103,60 +103,96 @@ function truncate(value: string, maxLength: number): string {
     : `${value.slice(0, maxLength - 1)}…`;
 }
 
-function serviceState(
-  label: string,
-  record: MaintenanceRecord | undefined,
-): { name: string; value: string; inline: false } {
-  if (!record) {
-    return {
-      name: label,
-      value: "🟢 **En ligne**",
-      inline: false,
-    };
-  }
-
-  return {
-    name: label,
-    value: `🔴 **Maintenance temporaire**\n**Raison :** ${maintenanceReasonLabel(record.reason)}\n${truncate(record.message || "Aucune précision complémentaire.", 600)}\n\n${maintenanceEndText(record.endsAt)}`,
-    inline: false,
-  };
-}
-
-function websiteServiceState(
-  record: MaintenanceRecord | undefined,
-): { name: string; value: string; inline: false } {
-  return {
-    name: "Site web Slyzz",
-    value: record
-      ? `🟠 **Maintenance déclarée — suivi uniquement**\nLe bot n’arrête pas le site web.\n**Raison :** ${maintenanceReasonLabel(record.reason)}\n${truncate(record.message || "Aucune précision complémentaire.", 500)}\n\n${maintenanceEndText(record.endsAt)}`
-      : "ℹ️ **État non vérifié par le bot**\nAucun site web n’est connecté à ce bot.",
-    inline: false,
-  };
-}
-
 function statusEmbed(records: MaintenanceRecord[]): EmbedBuilder {
   const byService = new Map(records.map((record) => [record.service, record]));
+  const services = [
+    { key: "support", label: "Support" },
+    { key: "recrutement", label: "Recrutement" },
+    { key: "staff-absence", label: "Absences staff" },
+  ] as const;
+  const activeServices = services.filter(({ key }) => byService.has(key));
+  const website = byService.get("site-web");
   const notice = byService.get("notice");
+  const serviceLines = services.map(({ key, label }) =>
+    byService.has(key)
+      ? `🔴 **${label}** — maintenance en cours`
+      : `🟢 **${label}** — en ligne`,
+  );
+  const summary =
+    activeServices.length > 0
+      ? `🔴 **${activeServices.length} service${activeServices.length > 1 ? "s" : ""} en maintenance** : ${activeServices.map(({ label }) => label).join(", ")}.`
+      : "🟢 **Tous les services du bot sont opérationnels.**";
+  const detailFields = activeServices.map(({ key, label }) => {
+    const record = byService.get(key);
+    if (!record) {
+      return { name: `Maintenance — ${label}`, value: "État indisponible.", inline: false };
+    }
+
+    return {
+      name: `🛠️ Maintenance — ${label}`,
+      value: [
+        `**Raison :** ${maintenanceReasonLabel(record.reason)}`,
+        record.message
+          ? `**Précision :** ${truncate(record.message, 300)}`
+          : undefined,
+        maintenanceEndText(record.endsAt),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      inline: false,
+    };
+  });
+  const websiteField = {
+    name: "🌐 Site web Slyzz",
+    value: website
+      ? [
+          "🟠 **Maintenance déclarée — état non vérifié**",
+          "Biscotto ne contrôle pas et ne coupe pas le site web.",
+          `**Raison :** ${maintenanceReasonLabel(website.reason)}`,
+          website.message
+            ? `**Précision :** ${truncate(website.message, 250)}`
+            : undefined,
+          maintenanceEndText(website.endsAt),
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "⚪ **Non surveillé par Biscotto** — aucun site web n’est connecté au bot.",
+    inline: false,
+  };
+  const noticeField = {
+    name: "📢 Avis de mise à jour",
+    value: notice
+      ? [
+          "🟠 **Avis actif — les services ne sont pas coupés**",
+          `**Raison :** ${maintenanceReasonLabel(notice.reason)}`,
+          notice.message
+            ? `**Message :** ${truncate(notice.message, 300)}`
+            : undefined,
+          maintenanceEndText(notice.endsAt),
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "Aucun avis actif.",
+    inline: false,
+  };
 
   return new EmbedBuilder()
-    .setColor(0xf2b2a8)
-    .setTitle("État des services")
+    .setColor(
+      activeServices.length > 0 ? 0xe45b5b : website || notice ? 0xe9ad54 : 0x55b77a,
+    )
+    .setTitle("📊 Statut des services")
     .setDescription(
-      "Une fin est facultative; sans date, la remise en ligne est manuelle. L’état du site Slyzz est indicatif : le bot ne le met pas hors ligne.",
+      `${summary}\nLes maintenances avec une fin programmée se terminent automatiquement.`,
     )
     .addFields(
-      serviceState("Support", byService.get("support")),
-      serviceState("Recrutement", byService.get("recrutement")),
-      serviceState("Absences staff", byService.get("staff-absence")),
-      websiteServiceState(byService.get("site-web")),
-      {
-        name: "Avis de mise à jour",
-        value: notice
-          ? `🟠 **Information seulement — services non coupés**\n**Raison :** ${maintenanceReasonLabel(notice.reason)}\n${truncate(notice.message || "Aucune précision complémentaire.", 600)}\n\n${maintenanceEndText(notice.endsAt)}`
-          : "Aucun avis en cours.",
-        inline: false,
-      },
+      { name: "État actuel", value: serviceLines.join("\n"), inline: false },
+      ...detailFields,
+      websiteField,
+      noticeField,
     )
+    .setFooter({
+      text: "Sans date de fin, la maintenance doit être terminée manuellement avec /maintenance.",
+    })
     .setTimestamp();
 }
 

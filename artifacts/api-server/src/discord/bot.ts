@@ -109,7 +109,11 @@ const SERVER_INFO_COMMAND_NAME = "info-serveur";
 const STAFF_ABSENCE_COMMAND_NAME = "absence-staff";
 const MAINTENANCE_COMMAND_NAME = "maintenance";
 const STATUS_COMMAND_NAME = "status";
-const MAINTENANCE_ALLOWED_USER_ID = "1140296215469240401";
+const MAINTENANCE_ALLOWED_USER_IDS = new Set([
+  "1140296215469240401",
+  "1487882100613971979",
+]);
+const MAINTENANCE_ALLOWED_ROLE_IDS = new Set(["1530654006068645938"]);
 const STATUS_ALLOWED_USER_ID = "1140296215469240401";
 const STATUS_ALLOWED_ROLE_IDS = new Set([
   "1529149444887543909",
@@ -2171,7 +2175,12 @@ export async function startDiscordBot(token: string): Promise<void> {
         } else if (interaction.commandName === RANK_DERANK_COMMAND_NAME) {
           await handleRoleActionCommand(interaction);
         } else if (interaction.commandName === MAINTENANCE_COMMAND_NAME) {
-          if (interaction.user.id !== MAINTENANCE_ALLOWED_USER_ID) {
+          const canManageMaintenance =
+            MAINTENANCE_ALLOWED_USER_IDS.has(interaction.user.id) ||
+            [...MAINTENANCE_ALLOWED_ROLE_IDS].some((roleId) =>
+              interactionHasRole(interaction, roleId),
+            );
+          if (!canManageMaintenance) {
             await interaction.reply({
               embeds: [
                 errorEmbed(

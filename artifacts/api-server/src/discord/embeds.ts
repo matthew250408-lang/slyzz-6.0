@@ -129,12 +129,11 @@ export function rankActionEmbed(
   role: Role,
   actor: User,
   reason: string,
-  okayEmoji = "👌",
 ): EmbedBuilder {
   const isRank = action === "rank";
   const heading = isRank
-    ? `${okayEmoji} ${RANK_EMOJI} Rank-Up !`
-    : `${okayEmoji} ${DERANK_EMOJI} Derank !`;
+    ? `${RANK_EMOJI} Rank-Up !`
+    : `${DERANK_EMOJI} Derank !`;
   const actionLines = isRank
     ? [
         `**Félicitations**, tu disposes désormais du **grade** <@&${role.id}> !`,

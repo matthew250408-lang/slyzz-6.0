@@ -1225,7 +1225,7 @@ async function handleRoleActionCommand(
   }
 
   try {
-    await announcementChannel.send({
+    const announcement = await announcementChannel.send({
       content: `<@${targetUser.id}> <@&${RANK_ANNOUNCEMENT_ROLE_ID}>`,
       embeds: [
         rankActionEmbed(
@@ -1234,9 +1234,6 @@ async function handleRoleActionCommand(
           targetRole,
           interaction.user,
           reason,
-          guild.emojis.cache.find(
-            (emoji) => emoji.name?.toLowerCase() === OKAY_EMOJI_NAME,
-          )?.toString() ?? "👌",
         ),
       ],
       allowedMentions: {
@@ -1244,6 +1241,16 @@ async function handleRoleActionCommand(
         users: [targetUser.id],
         roles: [RANK_ANNOUNCEMENT_ROLE_ID],
       },
+    });
+    const okayEmoji =
+      guild.emojis.cache.find(
+        (emoji) => emoji.name?.toLowerCase() === OKAY_EMOJI_NAME,
+      )?.toString() ?? "👌";
+    await announcement.react(okayEmoji).catch((error: unknown) => {
+      logger.warn(
+        { err: error, guildId: guild.id, action },
+        "Could not add the okay reaction to the rank announcement",
+      );
     });
     await interaction.editReply({
       embeds: [

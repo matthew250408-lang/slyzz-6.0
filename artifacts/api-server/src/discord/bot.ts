@@ -40,6 +40,7 @@ import {
   RANK_ANNOUNCEMENT_ROLE_ID,
   STAFF_ABSENCE_ACCESS_ROLE_ID,
   STAFF_ABSENCE_CHANNEL_ID,
+  STAFF_ABSENCE_STATUS_PREFIX,
   customQuestionKey,
   isCustomQuestionKey,
   questionLabel,
@@ -1118,9 +1119,23 @@ async function handleStaffAbsenceFinishButton(
   }
 
   const currentEmbed = interaction.message.embeds[0];
-  const statusIndex =
+  const descriptionLines = currentEmbed?.description?.split(/\r?\n/) ?? [];
+  const descriptionStatusIndex = descriptionLines.findIndex((line) =>
+    line.startsWith(STAFF_ABSENCE_STATUS_PREFIX),
+  );
+  const legacyStatusIndex =
     currentEmbed?.fields.findIndex((field) => field.name === "Statut") ?? -1;
-  if (statusIndex < 0 || currentEmbed.fields[statusIndex]?.value !== "⏳ En cours...") {
+  const descriptionStatusIsActive =
+    descriptionStatusIndex >= 0 &&
+    descriptionLines[descriptionStatusIndex] ===
+      `${STAFF_ABSENCE_STATUS_PREFIX}⏳ En cours...`;
+  const legacyStatusIsActive =
+    legacyStatusIndex >= 0 &&
+    currentEmbed?.fields[legacyStatusIndex]?.value === "⏳ En cours...";
+  if (
+    !currentEmbed ||
+    (!descriptionStatusIsActive && !legacyStatusIsActive)
+  ) {
     await interaction.reply({
       embeds: [
         errorEmbed(
@@ -1136,11 +1151,17 @@ async function handleStaffAbsenceFinishButton(
   processingStaffAbsenceFinishes.add(interaction.message.id);
   try {
     const updatedEmbed = EmbedBuilder.from(currentEmbed);
-    updatedEmbed.spliceFields(statusIndex, 1, {
-      name: "Statut",
-      value: "✅ Terminé",
-      inline: false,
-    });
+    if (descriptionStatusIsActive) {
+      descriptionLines[descriptionStatusIndex] =
+        `${STAFF_ABSENCE_STATUS_PREFIX}✅ Terminé`;
+      updatedEmbed.setDescription(descriptionLines.join("\n"));
+    } else {
+      updatedEmbed.spliceFields(legacyStatusIndex, 1, {
+        name: "Statut",
+        value: "✅ Terminé",
+        inline: false,
+      });
+    }
     const disabledButton = new ButtonBuilder()
       .setCustomId(interaction.customId)
       .setLabel("Terminé")

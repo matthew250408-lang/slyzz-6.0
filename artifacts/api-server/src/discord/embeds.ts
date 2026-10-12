@@ -17,6 +17,7 @@ import {
   MEMBER_EMOJI,
   RANK_EMOJI,
   REASON_EMOJI,
+  STAFF_ABSENCE_STATUS_PREFIX,
   questionLabel,
 } from "./constants";
 import type { InscriptionConfigData } from "./store";
@@ -97,32 +98,14 @@ export function staffAbsenceEmbed(
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
     .setTitle("Absence du staff")
-    .addFields(
-      {
-        name: "Membre",
-        value: `${MEMBER_EMOJI} <@${member.id}>`,
-        inline: false,
-      },
-      {
-        name: "Rôle le plus élevé",
-        value: `${HIGHEST_ROLE_EMOJI} <@&${member.roles.highest.id}>`,
-        inline: false,
-      },
-      {
-        name: "Date",
-        value: `${DATE_EMOJI} du ${startDate} au ${endDate}`,
-        inline: false,
-      },
-      {
-        name: "Raison",
-        value: `${REASON_EMOJI} ${reason.trim()}`,
-        inline: false,
-      },
-      {
-        name: "Statut",
-        value: "⏳ En cours...",
-        inline: false,
-      },
+    .setDescription(
+      [
+        `${MEMBER_EMOJI} **Membre :** <@${member.id}>`,
+        `${HIGHEST_ROLE_EMOJI} **Rôle le plus élevé :** <@&${member.roles.highest.id}>`,
+        `${DATE_EMOJI} **Date :** du ${startDate} au ${endDate}`,
+        `${REASON_EMOJI} **Raison :** ${reason.trim()}`,
+        `${STAFF_ABSENCE_STATUS_PREFIX}⏳ En cours...`,
+      ].join("\n"),
     )
     .setThumbnail(member.displayAvatarURL())
     .setTimestamp();

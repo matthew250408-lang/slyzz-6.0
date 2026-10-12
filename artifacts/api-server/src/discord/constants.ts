@@ -27,6 +27,7 @@ export const RANK_EMOJI = "<:rank:1558389911625662544>";
 export const DERANK_EMOJI = "<:derank:1558389778406440991>";
 export const HIGHEST_ROLE_EMOJI = "<:r_le:1559245099945299978>";
 export const DATE_EMOJI = "<:temps:1559244751008432308>";
+export const STAFF_ABSENCE_STATUS_PREFIX = "📌 **Statut :** ";
 export const OKAY_EMOJI_NAME = "okay";
 
 export const AUTHORIZED_SETUP_USER_IDS = new Set([

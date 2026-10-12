@@ -20,9 +20,15 @@ import {
   createModmailConversation,
   getActiveModmailForUser,
   getModmailByThreadId,
+  saveModmailReview,
+  setModmailReviewMessageId,
   unclaimModmailConversation,
   updateModmailStatus,
 } from "./modmail-store";
+import {
+  getActiveMaintenance,
+  maintenanceReasonLabel,
+} from "./maintenance-store";
 
 export const MODMAIL_FORUM_CHANNEL_ID = "1553737848908292157";
 export const MODMAIL_SUPPORT_ROLE_ID = "1429063878700175471";
@@ -48,6 +54,16 @@ export const MODMAIL_CLOSE_CONFIRM_ID = "modmail:close:confirm";
 export const MODMAIL_CLOSE_CANCEL_ID = "modmail:close:cancel";
 export const MODMAIL_REPLY_ID = "modmail:reply";
 export const MODMAIL_REPLY_MODAL_ID = "modmail:reply-modal";
+export const MODMAIL_REVIEW_RATING_PREFIX = "modmail:review:rate:";
+export const MODMAIL_REVIEW_MODAL_PREFIX = "modmail:review:modal:";
+export const MODMAIL_REVIEW_CONFIRM_PREFIX = "modmail:review:confirm:";
+export const MODMAIL_REVIEW_EDIT_PREFIX = "modmail:review:edit:";
+
+type ReviewContext = {
+  threadId: string;
+  rating: number;
+  promptMessageId: string;
+};
 
 type PendingConfirmation = {
   content: string;
@@ -55,6 +71,7 @@ type PendingConfirmation = {
 };
 
 const pendingConfirmations = new Map<string, PendingConfirmation>();
+const processingReviews = new Set<string>();
 
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -189,6 +206,155 @@ function closeConfirmationComponents(): ActionRowBuilder<ButtonBuilder>[] {
   ];
 }
 
+function reviewRatingEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0xf2b2a8)
+    .setTitle("Comment s’est passée ta demande ?")
+    .setDescription(
+      "Ton ticket vient d’être fermé. Choisis une note, puis partage ton expérience pour aider l’équipe à s’améliorer.",
+    )
+    .setFooter({ text: "Ton avis sera publié dans le ticket, avec ta note." });
+}
+
+function reviewRatingComponents(
+  threadId: string,
+): ActionRowBuilder<ButtonBuilder>[] {
+  const buttons = [1, 2, 3, 4, 5].map((rating) =>
+    new ButtonBuilder()
+      .setCustomId(`${MODMAIL_REVIEW_RATING_PREFIX}${threadId}:${rating}`)
+      .setLabel(`${rating} ⭐`)
+      .setStyle(ButtonStyle.Secondary),
+  );
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)];
+}
+
+function reviewModal(
+  context: ReviewContext,
+  initialReview?: string,
+): ModalBuilder {
+  const reviewInput = new TextInputBuilder()
+    .setCustomId("review-content")
+    .setLabel("Comment s’est passée ton expérience ?")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMinLength(5)
+    .setMaxLength(1000)
+    .setPlaceholder("Dis-nous ce qui a bien fonctionné ou ce qu’on peut améliorer…");
+  if (initialReview) {
+    reviewInput.setValue(initialReview.slice(0, 1000));
+  }
+
+  return new ModalBuilder()
+    .setCustomId(
+      `${MODMAIL_REVIEW_MODAL_PREFIX}${context.threadId}:${context.rating}:${context.promptMessageId}`,
+    )
+    .setTitle(`Ton avis • ${context.rating}/5 étoiles`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(reviewInput),
+    );
+}
+
+function reviewPreviewEmbed(rating: number, review: string): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0xf2b2a8)
+    .setTitle("Confirme ton avis")
+    .setDescription(
+      "Vérifie ton commentaire. En validant, tu l’ajouteras au post de ton ticket avec ta note.",
+    )
+    .addFields(
+      {
+        name: "Ta note",
+        value: `${"⭐".repeat(rating)} (${rating}/5)`,
+        inline: false,
+      },
+      {
+        name: "Ton avis",
+        value: review.slice(0, 1000),
+        inline: false,
+      },
+    );
+}
+
+function reviewPreviewComponents(
+  context: ReviewContext,
+): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(
+          `${MODMAIL_REVIEW_CONFIRM_PREFIX}${context.threadId}:${context.rating}:${context.promptMessageId}`,
+        )
+        .setLabel("Valider mon avis")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(
+          `${MODMAIL_REVIEW_EDIT_PREFIX}${context.threadId}:${context.rating}:${context.promptMessageId}`,
+        )
+        .setLabel("Modifier")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function parseReviewContext(
+  customId: string,
+  prefix: string,
+): ReviewContext | null {
+  const match = customId.match(
+    new RegExp(`^${prefix}(\\d{17,20}):([1-5]):(\\d{17,20})$`),
+  );
+  if (!match) {
+    return null;
+  }
+
+  return {
+    threadId: match[1],
+    rating: Number(match[2]),
+    promptMessageId: match[3],
+  };
+}
+
+function reviewStatusEmbed(
+  title: string,
+  description: string,
+): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0xf2b2a8)
+    .setTitle(title)
+    .setDescription(description);
+}
+
+function modmailReviewEmbed(
+  user: User,
+  rating: number,
+  review: string,
+  moderatorId: string | null,
+): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0xf2b2a8)
+    .setTitle("Avis sur le support")
+    .setDescription(truncate(review, 4096))
+    .addFields(
+      {
+        name: "Membre",
+        value: `${user.globalName ?? user.username} (<@${user.id}>)`,
+        inline: true,
+      },
+      {
+        name: "Note",
+        value: `${"⭐".repeat(rating)} (${rating}/5)`,
+        inline: true,
+      },
+      {
+        name: "Modérateur",
+        value: moderatorId ? `<@${moderatorId}>` : "Aucun modérateur désigné",
+        inline: false,
+      },
+    )
+    .setFooter({ text: "Avis validé • Modmail" })
+    .setTimestamp();
+}
+
 function replyModal(): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(MODMAIL_REPLY_MODAL_ID)
@@ -297,6 +463,24 @@ async function handleDirectMessage(
   message: Message,
   client: Client,
 ): Promise<void> {
+  const supportMaintenance = await getActiveMaintenance("support");
+  if (supportMaintenance) {
+    const endTimestamp = Math.floor(
+      supportMaintenance.endsAt.getTime() / 1000,
+    );
+    await message.react("⏳").catch(() => undefined);
+    await message.reply({
+      embeds: [
+        statusEmbed(
+          "Support temporairement indisponible",
+          `**Raison :** ${maintenanceReasonLabel(supportMaintenance.reason)}\n${supportMaintenance.message || "Aucune précision complémentaire."}\n\nLe support sera de nouveau disponible <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+        ),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
   await message.react("✅").catch(() => undefined);
   const content = messageContent(message);
   const activeConversation = await getActiveModmailForUser(message.author.id);
@@ -632,14 +816,15 @@ async function handleSupportButton(
   const user = await client.users.fetch(conversation.userId);
   await user
     .send({
-      embeds: [
-        statusEmbed(
-          "Demande fermée",
-          "Ta demande a été fermée par le support. Tu peux envoyer un nouveau DM si tu as besoin d'aide.",
-        ),
-      ],
+      embeds: [reviewRatingEmbed()],
+      components: reviewRatingComponents(thread.id),
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      logger.warn(
+        { err: error, userId: conversation.userId, threadId: thread.id },
+        "Could not send mod mail review invitation",
+      );
+    });
 
   await interaction.update({
     embeds: [statusEmbed("Ticket fermé", "Le ticket est maintenant fermé.")],
@@ -659,10 +844,372 @@ async function handleSupportButton(
   });
 }
 
+async function handleReviewRatingButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const match = interaction.customId.match(
+    /^modmail:review:rate:(\d{17,20}):([1-5])$/,
+  );
+  if (!match) {
+    await interaction.reply({
+      embeds: [reviewStatusEmbed("Action indisponible", "Cette note n’est pas valide.")],
+    });
+    return;
+  }
+
+  const context: ReviewContext = {
+    threadId: match[1],
+    rating: Number(match[2]),
+    promptMessageId: interaction.message.id,
+  };
+  const conversation = await getModmailByThreadId(context.threadId);
+  if (
+    !conversation ||
+    conversation.userId !== interaction.user.id ||
+    conversation.status !== "closed"
+  ) {
+    await interaction.reply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis indisponible",
+          "Cette demande est introuvable ou n’est plus ouverte aux avis.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (conversation.reviewRating !== null) {
+    await interaction.update({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis déjà validé",
+          "Un avis a déjà été envoyé pour ce ticket.",
+        ),
+      ],
+      components: [],
+    });
+    return;
+  }
+
+  await interaction.showModal(reviewModal(context));
+}
+
+async function handleReviewEditButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const context = parseReviewContext(
+    interaction.customId,
+    MODMAIL_REVIEW_EDIT_PREFIX,
+  );
+  const conversation = context
+    ? await getModmailByThreadId(context.threadId)
+    : undefined;
+  if (
+    !context ||
+    !conversation ||
+    conversation.userId !== interaction.user.id ||
+    conversation.status !== "closed" ||
+    conversation.reviewRating !== null
+  ) {
+    await interaction.reply({
+      embeds: [
+        reviewStatusEmbed(
+          "Modification indisponible",
+          "Cet avis a déjà été envoyé ou n’est plus modifiable.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  const review = interaction.message.embeds[0]?.fields.find(
+    (field) => field.name === "Ton avis",
+  )?.value;
+  if (!review) {
+    await interaction.reply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis introuvable",
+          "Rouvre le formulaire depuis le message de demande d’avis.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  await interaction.showModal(reviewModal(context, review));
+}
+
+async function handleReviewModal(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  await interaction.deferReply();
+  const context = parseReviewContext(
+    interaction.customId,
+    MODMAIL_REVIEW_MODAL_PREFIX,
+  );
+  const conversation = context
+    ? await getModmailByThreadId(context.threadId)
+    : undefined;
+  if (
+    !context ||
+    !conversation ||
+    conversation.userId !== interaction.user.id ||
+    conversation.status !== "closed"
+  ) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis indisponible",
+          "Ce formulaire ne correspond pas à un ticket fermé par le support.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (conversation.reviewRating !== null) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis déjà envoyé",
+          "Un seul avis peut être validé pour chaque ticket.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  const review = interaction.fields.getTextInputValue("review-content").trim();
+  if (review.length < 5) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis trop court",
+          "Ajoute quelques mots avant de valider ton expérience.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [reviewPreviewEmbed(context.rating, review)],
+    components: reviewPreviewComponents(context),
+  });
+}
+
+async function publishModmailReview(
+  client: Client,
+  conversation: NonNullable<Awaited<ReturnType<typeof getModmailByThreadId>>>,
+  user: User,
+  rating: number,
+  review: string,
+): Promise<string> {
+  const channel = await client.channels.fetch(conversation.threadId).catch(() => null);
+  if (!channel?.isThread()) {
+    throw new Error(`Mod mail thread ${conversation.threadId} is unavailable.`);
+  }
+
+  const thread = channel as ThreadChannel;
+  try {
+    await thread.setArchived(false);
+    await thread.setLocked(false);
+    const reviewMessage = await thread.send({
+      content: conversation.claimedByUserId
+        ? `<@${conversation.claimedByUserId}>`
+        : undefined,
+      embeds: [
+        modmailReviewEmbed(
+          user,
+          rating,
+          review,
+          conversation.claimedByUserId,
+        ),
+      ],
+      allowedMentions: {
+        parse: [],
+        users: conversation.claimedByUserId
+          ? [conversation.claimedByUserId]
+          : [],
+      },
+    });
+    return reviewMessage.id;
+  } finally {
+    await thread.setLocked(true).catch((error) => {
+      logger.warn(
+        { err: error, threadId: thread.id },
+        "Could not re-lock mod mail thread after review",
+      );
+    });
+    await thread.setArchived(true).catch((error) => {
+      logger.warn(
+        { err: error, threadId: thread.id },
+        "Could not re-archive mod mail thread after review",
+      );
+    });
+  }
+}
+
+async function handleReviewConfirmButton(
+  interaction: ButtonInteraction,
+  client: Client,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const context = parseReviewContext(
+    interaction.customId,
+    MODMAIL_REVIEW_CONFIRM_PREFIX,
+  );
+  const conversation = context
+    ? await getModmailByThreadId(context.threadId)
+    : undefined;
+  if (
+    !context ||
+    !conversation ||
+    conversation.userId !== interaction.user.id ||
+    conversation.status !== "closed"
+  ) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Validation impossible",
+          "Ce formulaire ne correspond pas à un ticket fermé par le support.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (conversation.reviewMessageId) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis déjà publié",
+          "Merci, ton avis a déjà été ajouté au post du ticket.",
+        ),
+      ],
+      components: [],
+    });
+    return;
+  }
+
+  const key = `${context.threadId}:${interaction.user.id}`;
+  if (processingReviews.has(key)) {
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Publication en cours",
+          "Ton avis est en train d’être ajouté au ticket.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  processingReviews.add(key);
+  const draftReview = interaction.message.embeds[0]?.fields.find(
+    (field) => field.name === "Ton avis",
+  )?.value;
+  if (!draftReview) {
+    processingReviews.delete(key);
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis introuvable",
+          "Rouvre le formulaire depuis le message de demande d’avis.",
+        ),
+      ],
+    });
+    return;
+  }
+
+  try {
+    let currentConversation = conversation;
+    if (currentConversation.reviewRating === null) {
+      await saveModmailReview(
+        context.threadId,
+        interaction.user.id,
+        context.rating,
+        draftReview,
+      );
+      currentConversation =
+        (await getModmailByThreadId(context.threadId)) ?? currentConversation;
+    }
+
+    if (
+      currentConversation.reviewRating === null ||
+      currentConversation.reviewText === null
+    ) {
+      throw new Error("The review could not be saved.");
+    }
+
+    const user = await client.users.fetch(currentConversation.userId);
+    let reviewMessageId = currentConversation.reviewMessageId;
+    if (!reviewMessageId) {
+      reviewMessageId = await publishModmailReview(
+        client,
+        currentConversation,
+        user,
+        currentConversation.reviewRating,
+        currentConversation.reviewText,
+      );
+      await setModmailReviewMessageId(context.threadId, reviewMessageId);
+    }
+
+    const dm = await user.createDM();
+    const originalPrompt = await dm.messages
+      .fetch(context.promptMessageId)
+      .catch(() => null);
+    await originalPrompt
+      ?.edit({
+        embeds: [
+          reviewStatusEmbed(
+            "Merci pour ton avis",
+            "Ton retour a été ajouté au post de ton ticket.",
+          ),
+        ],
+        components: [],
+      })
+      .catch(() => undefined);
+
+    await interaction.editReply({
+      embeds: [
+        reviewStatusEmbed(
+          "Avis publié",
+          "Merci d’avoir partagé ton expérience. Ton avis apparaît maintenant dans le ticket.",
+        ),
+      ],
+      components: [],
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, threadId: context.threadId, userId: interaction.user.id },
+      "Could not publish mod mail review",
+    );
+    await interaction.editReply({
+      embeds: [
+        reviewPreviewEmbed(
+          conversation.reviewRating ?? context.rating,
+          conversation.reviewText ?? draftReview,
+        ).setFooter({
+          text: "Publication impossible pour le moment • Réessaie en validant à nouveau",
+        }),
+      ],
+      components: reviewPreviewComponents(context),
+    }).catch(() => undefined);
+  } finally {
+    processingReviews.delete(key);
+  }
+}
+
 export function isModmailButton(customId: string): boolean {
   return (
     customId === MODMAIL_CONFIRM_ID ||
     customId === MODMAIL_CANCEL_ID ||
+    customId.startsWith(MODMAIL_REVIEW_RATING_PREFIX) ||
+    customId.startsWith(MODMAIL_REVIEW_CONFIRM_PREFIX) ||
+    customId.startsWith(MODMAIL_REVIEW_EDIT_PREFIX) ||
     isSupportButton(customId)
   );
 }
@@ -671,6 +1218,19 @@ export async function handleModmailButton(
   interaction: ButtonInteraction,
   client: Client,
 ): Promise<void> {
+  if (interaction.customId.startsWith(MODMAIL_REVIEW_RATING_PREFIX)) {
+    await handleReviewRatingButton(interaction);
+    return;
+  }
+  if (interaction.customId.startsWith(MODMAIL_REVIEW_CONFIRM_PREFIX)) {
+    await handleReviewConfirmButton(interaction, client);
+    return;
+  }
+  if (interaction.customId.startsWith(MODMAIL_REVIEW_EDIT_PREFIX)) {
+    await handleReviewEditButton(interaction);
+    return;
+  }
+
   if (
     interaction.customId === MODMAIL_CONFIRM_ID ||
     interaction.customId === MODMAIL_CANCEL_ID
@@ -692,13 +1252,21 @@ export async function handleModmailButton(
 }
 
 export function isModmailModal(customId: string): boolean {
-  return customId === MODMAIL_REPLY_MODAL_ID;
+  return (
+    customId === MODMAIL_REPLY_MODAL_ID ||
+    customId.startsWith(MODMAIL_REVIEW_MODAL_PREFIX)
+  );
 }
 
 export async function handleModmailModal(
   interaction: ModalSubmitInteraction,
   client: Client,
 ): Promise<void> {
+  if (interaction.customId.startsWith(MODMAIL_REVIEW_MODAL_PREFIX)) {
+    await handleReviewModal(interaction);
+    return;
+  }
+
   if (
     !interaction.guild ||
     !interaction.channel?.isThread() ||

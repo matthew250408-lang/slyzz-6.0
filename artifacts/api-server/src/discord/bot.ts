@@ -69,6 +69,15 @@ import {
   type InscriptionConfigData,
 } from "./store";
 import {
+  getActiveMaintenance,
+  maintenanceReasonLabel,
+} from "./maintenance-store";
+import {
+  handleMaintenanceCommand,
+  handleStatusCommand,
+  startMaintenanceExpiryWatcher,
+} from "./maintenance";
+import {
   handleModmailButton,
   handleModmailModal,
   handleModmailMessage,
@@ -98,6 +107,8 @@ const BOT_INFO_COMMAND_NAME = "info-bot";
 const RANK_DERANK_COMMAND_NAME = "rank-derank";
 const SERVER_INFO_COMMAND_NAME = "info-serveur";
 const STAFF_ABSENCE_COMMAND_NAME = "absence-staff";
+const MAINTENANCE_COMMAND_NAME = "maintenance";
+const STATUS_COMMAND_NAME = "status";
 const STAFF_ABSENCE_FINISH_BUTTON_PREFIX = "staff-absence:finish:";
 const processingStaffAbsenceFinishes = new Set<string>();
 
@@ -291,6 +302,62 @@ const rankDerankCommand = new SlashCommandBuilder()
       .setMaxLength(400)
       .setRequired(true),
   );
+
+const maintenanceCommand = new SlashCommandBuilder()
+  .setName(MAINTENANCE_COMMAND_NAME)
+  .setDescription("Active ou termine une maintenance temporaire")
+  .addStringOption((option) =>
+    option
+      .setName("action")
+      .setDescription("Activer une maintenance ou remettre le service en ligne")
+      .addChoices(
+        { name: "Activer", value: "start" },
+        { name: "Terminer maintenant", value: "stop" },
+      )
+      .setRequired(true),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("service")
+      .setDescription("Service concerné")
+      .addChoices(
+        { name: "Support", value: "support" },
+        { name: "Recrutement", value: "recrutement" },
+        { name: "Tout le bot (support + recrutement)", value: "tout" },
+        { name: "Avis de mise à jour (sans couper les services)", value: "annonce" },
+      )
+      .setRequired(true),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("raison")
+      .setDescription("Cause de la maintenance")
+      .addChoices(
+        { name: "Mise à jour", value: "mise-a-jour" },
+        { name: "Incident technique", value: "incident-technique" },
+        { name: "Maintenance préventive", value: "maintenance-preventive" },
+        { name: "Autre", value: "autre" },
+      )
+      .setRequired(false),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("fin")
+      .setDescription("Fin prévue au format JJ/MM/AAAA HH:mm, heure de Bruxelles")
+      .setMaxLength(20)
+      .setRequired(false),
+  )
+  .addStringOption((option) =>
+    option
+      .setName("message")
+      .setDescription("Précisions supplémentaires (requises si la raison est Autre)")
+      .setMaxLength(1000)
+      .setRequired(false),
+  );
+
+const statusCommand = new SlashCommandBuilder()
+  .setName(STATUS_COMMAND_NAME)
+  .setDescription("Affiche l’état du support et du recrutement");
 
 function isPrimarySetupUser(userId: string): boolean {
   return AUTHORIZED_SETUP_USER_IDS.has(userId);
@@ -1756,6 +1823,22 @@ async function handleModalSubmit(
   }
 
   await interaction.deferReply({ ephemeral: true });
+  const recruitmentMaintenance = await getActiveMaintenance("recrutement");
+  if (recruitmentMaintenance) {
+    const endTimestamp = Math.floor(
+      recruitmentMaintenance.endsAt.getTime() / 1000,
+    );
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Recrutement temporairement indisponible",
+          `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message}\n\nRéouverture prévue : <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+        ),
+      ],
+    });
+    return;
+  }
+
   if (!config.responseChannelId) {
     await interaction.editReply({
       embeds: [
@@ -1981,6 +2064,7 @@ export async function startDiscordBot(token: string): Promise<void> {
     };
     updateBotStatus();
     setInterval(updateBotStatus, 15_000);
+    startMaintenanceExpiryWatcher(readyClient);
 
     const rest = new REST({ version: "10" }).setToken(token);
     const commandDefinitions = [
@@ -1992,6 +2076,8 @@ export async function startDiscordBot(token: string): Promise<void> {
       serverInfoCommand.toJSON(),
       staffAbsenceCommand.toJSON(),
       rankDerankCommand.toJSON(),
+      maintenanceCommand.toJSON(),
+      statusCommand.toJSON(),
     ];
 
     await rest.put(Routes.applicationCommands(readyClient.user.id), {
@@ -2047,6 +2133,22 @@ export async function startDiscordBot(token: string): Promise<void> {
           await handleStaffAbsenceCommand(interaction);
         } else if (interaction.commandName === RANK_DERANK_COMMAND_NAME) {
           await handleRoleActionCommand(interaction);
+        } else if (interaction.commandName === MAINTENANCE_COMMAND_NAME) {
+          if (!isPrimarySetupUser(interaction.user.id)) {
+            await interaction.reply({
+              embeds: [
+                errorEmbed(
+                  "Accès refusé",
+                  "Seuls les administrateurs principaux peuvent modifier l’état des services.",
+                ),
+              ],
+              ephemeral: true,
+            });
+          } else {
+            await handleMaintenanceCommand(interaction);
+          }
+        } else if (interaction.commandName === STATUS_COMMAND_NAME) {
+          await handleStatusCommand(interaction);
         }
         return;
       }
@@ -2091,6 +2193,8 @@ export async function startDiscordBot(token: string): Promise<void> {
         }
 
         const config = await getInscriptionConfig(interaction.guild.id);
+        const recruitmentMaintenance =
+          await getActiveMaintenance("recrutement");
         await interaction.reply({
           embeds: [
             registrationEmbed(
@@ -2100,6 +2204,7 @@ export async function startDiscordBot(token: string): Promise<void> {
               config.questions,
               interaction.guild,
               Boolean(config.responseChannelId && config.questions.length > 0),
+              recruitmentMaintenance ?? undefined,
             ),
           ],
           components: [registrationComponents(config.buttonLabel, true)[0]],
@@ -2259,6 +2364,23 @@ export async function startDiscordBot(token: string): Promise<void> {
         }
 
         const config = await getInscriptionConfig(interaction.guild.id);
+        const recruitmentMaintenance =
+          await getActiveMaintenance("recrutement");
+        if (recruitmentMaintenance) {
+          const endTimestamp = Math.floor(
+            recruitmentMaintenance.endsAt.getTime() / 1000,
+          );
+          await interaction.reply({
+            embeds: [
+              errorEmbed(
+                "Recrutement temporairement indisponible",
+          `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message}\n\nRéouverture prévue : <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+              ),
+            ],
+            ephemeral: true,
+          });
+          return;
+        }
         if (config.questions.length === 0) {
           await interaction.reply({
             embeds: [

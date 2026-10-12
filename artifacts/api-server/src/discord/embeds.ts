@@ -289,7 +289,13 @@ export function registrationEmbed(
   questions: string[],
   guild?: Guild,
   isReady = false,
+  maintenance?: { message: string; reason: string; endsAt: Date },
 ): EmbedBuilder {
+  const maintenanceStatus = maintenance
+    ? `🛠️ **Recrutement temporairement suspendu**\n**Raison :** ${maintenance.reason}\n${truncate(maintenance.message || "Aucune précision complémentaire.", 600)}\n\nRetour prévu : <t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:F> (<t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:R>).`
+    : isReady
+      ? "🟢 Les candidatures sont ouvertes."
+      : "🟠 Ouverture prochaine — l’équipe termine la configuration.";
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
     .setTitle(title.trim() || DEFAULT_EMBED_TITLE)
@@ -310,9 +316,7 @@ export function registrationEmbed(
       },
       {
         name: "📣 État",
-        value: isReady
-          ? "🟢 Les candidatures sont ouvertes."
-          : "🟠 Ouverture prochaine — l’équipe termine la configuration.",
+        value: maintenanceStatus,
         inline: false,
       },
     )
@@ -323,7 +327,7 @@ export function registrationEmbed(
   if (guild) {
     const iconURL = guild.iconURL({ size: 256 });
     embed.setAuthor({
-      name: `${guild.name} • ${isReady ? "CANDIDATURES OUVERTES" : "RECRUTEMENT EN PRÉPARATION"}`,
+      name: `${guild.name} • ${maintenance ? "RECRUTEMENT EN PAUSE" : isReady ? "CANDIDATURES OUVERTES" : "RECRUTEMENT EN PRÉPARATION"}`,
     });
     const bannerURL = guild.bannerURL({ size: 1024 });
     if (bannerURL) {

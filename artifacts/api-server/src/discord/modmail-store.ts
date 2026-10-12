@@ -1,4 +1,4 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import {
   db,
   modmailConversationsTable,
@@ -103,4 +103,40 @@ export async function unclaimModmailConversation(
     .returning({ id: modmailConversationsTable.id });
 
   return unclaimed.length > 0;
+}
+
+export async function saveModmailReview(
+  threadId: string,
+  userId: string,
+  rating: number,
+  reviewText: string,
+): Promise<boolean> {
+  const updated = await db
+    .update(modmailConversationsTable)
+    .set({
+      reviewRating: rating,
+      reviewText,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(modmailConversationsTable.threadId, threadId),
+        eq(modmailConversationsTable.userId, userId),
+        eq(modmailConversationsTable.status, "closed"),
+        isNull(modmailConversationsTable.reviewRating),
+      ),
+    )
+    .returning({ id: modmailConversationsTable.id });
+
+  return updated.length > 0;
+}
+
+export async function setModmailReviewMessageId(
+  threadId: string,
+  messageId: string,
+): Promise<void> {
+  await db
+    .update(modmailConversationsTable)
+    .set({ reviewMessageId: messageId, updatedAt: new Date() })
+    .where(eq(modmailConversationsTable.threadId, threadId));
 }

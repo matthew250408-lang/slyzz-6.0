@@ -8,6 +8,10 @@ import {
 } from "discord.js";
 import { getInscriptionConfig, saveInscriptionConfig } from "./store";
 import { registrationEmbed } from "./embeds";
+import {
+  getActiveMaintenance,
+  maintenanceReasonLabel,
+} from "./maintenance-store";
 
 const REGISTRATION_BUTTON_ID = "registration:open";
 
@@ -60,6 +64,7 @@ export async function syncRegistrationMessage(
     }
   }
 
+  const recruitmentMaintenance = await getActiveMaintenance("recrutement");
   const payload = {
     embeds: [
       registrationEmbed(
@@ -69,12 +74,21 @@ export async function syncRegistrationMessage(
         config.questions,
         guild,
         Boolean(config.responseChannelId && config.questions.length > 0),
+        recruitmentMaintenance
+          ? {
+              message: recruitmentMaintenance.message,
+              reason: maintenanceReasonLabel(recruitmentMaintenance.reason),
+              endsAt: recruitmentMaintenance.endsAt,
+            }
+          : undefined,
       ),
     ],
     components: [
       registrationComponents(
         config.buttonLabel,
-        !config.responseChannelId || config.questions.length === 0,
+        Boolean(recruitmentMaintenance) ||
+          !config.responseChannelId ||
+          config.questions.length === 0,
       )[0],
     ],
   };

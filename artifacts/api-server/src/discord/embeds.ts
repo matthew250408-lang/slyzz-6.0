@@ -289,10 +289,13 @@ export function registrationEmbed(
   questions: string[],
   guild?: Guild,
   isReady = false,
-  maintenance?: { message: string; reason: string; endsAt: Date },
+  maintenance?: { message: string; reason: string; endsAt: Date | null },
 ): EmbedBuilder {
+  const maintenanceEnd = maintenance?.endsAt
+    ? `Retour prévu : <t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:F> (<t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:R>).`
+    : "Retour après réactivation manuelle.";
   const maintenanceStatus = maintenance
-    ? `🛠️ **Recrutement temporairement suspendu**\n**Raison :** ${maintenance.reason}\n${truncate(maintenance.message || "Aucune précision complémentaire.", 600)}\n\nRetour prévu : <t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:F> (<t:${Math.floor(maintenance.endsAt.getTime() / 1000)}:R>).`
+    ? `🛠️ **Recrutement temporairement suspendu**\n**Raison :** ${maintenance.reason}\n${truncate(maintenance.message || "Aucune précision complémentaire.", 600)}\n\n${maintenanceEnd}`
     : isReady
       ? "🟢 Les candidatures sont ouvertes."
       : "🟠 Ouverture prochaine — l’équipe termine la configuration.";

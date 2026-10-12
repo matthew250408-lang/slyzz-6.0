@@ -237,7 +237,7 @@ function reviewModal(
     .setLabel("Comment s’est passée ton expérience ?")
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
-    .setMinLength(5)
+    .setMinLength(1)
     .setMaxLength(1000)
     .setPlaceholder("Dis-nous ce qui a bien fonctionné ou ce qu’on peut améliorer…");
   if (initialReview) {
@@ -465,15 +465,15 @@ async function handleDirectMessage(
 ): Promise<void> {
   const supportMaintenance = await getActiveMaintenance("support");
   if (supportMaintenance) {
-    const endTimestamp = Math.floor(
-      supportMaintenance.endsAt.getTime() / 1000,
-    );
+    const availabilityText = supportMaintenance.endsAt
+      ? `Le support sera de nouveau disponible <t:${Math.floor(supportMaintenance.endsAt.getTime() / 1000)}:F> (<t:${Math.floor(supportMaintenance.endsAt.getTime() / 1000)}:R>).`
+      : "Le support restera indisponible jusqu’à sa réactivation manuelle.";
     await message.react("⏳").catch(() => undefined);
     await message.reply({
       embeds: [
         statusEmbed(
           "Support temporairement indisponible",
-          `**Raison :** ${maintenanceReasonLabel(supportMaintenance.reason)}\n${supportMaintenance.message || "Aucune précision complémentaire."}\n\nLe support sera de nouveau disponible <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+          `**Raison :** ${maintenanceReasonLabel(supportMaintenance.reason)}\n${supportMaintenance.message || "Aucune précision complémentaire."}\n\n${availabilityText}`,
         ),
       ],
       allowedMentions: { parse: [] },
@@ -945,59 +945,80 @@ async function handleReviewModal(
   interaction: ModalSubmitInteraction,
 ): Promise<void> {
   await interaction.deferReply();
-  const context = parseReviewContext(
-    interaction.customId,
-    MODMAIL_REVIEW_MODAL_PREFIX,
-  );
-  const conversation = context
-    ? await getModmailByThreadId(context.threadId)
-    : undefined;
-  if (
-    !context ||
-    !conversation ||
-    conversation.userId !== interaction.user.id ||
-    conversation.status !== "closed"
-  ) {
-    await interaction.editReply({
-      embeds: [
-        reviewStatusEmbed(
-          "Avis indisponible",
-          "Ce formulaire ne correspond pas à un ticket fermé par le support.",
-        ),
-      ],
-    });
-    return;
-  }
+  let threadId: string | undefined;
+  try {
+    const context = parseReviewContext(
+      interaction.customId,
+      MODMAIL_REVIEW_MODAL_PREFIX,
+    );
+    threadId = context?.threadId;
+    const conversation = context
+      ? await getModmailByThreadId(context.threadId)
+      : undefined;
+    if (
+      !context ||
+      !conversation ||
+      conversation.userId !== interaction.user.id ||
+      conversation.status !== "closed"
+    ) {
+      await interaction.editReply({
+        embeds: [
+          reviewStatusEmbed(
+            "Avis indisponible",
+            "Ce formulaire ne correspond pas à un ticket fermé par le support.",
+          ),
+        ],
+      });
+      return;
+    }
 
-  if (conversation.reviewRating !== null) {
-    await interaction.editReply({
-      embeds: [
-        reviewStatusEmbed(
-          "Avis déjà envoyé",
-          "Un seul avis peut être validé pour chaque ticket.",
-        ),
-      ],
-    });
-    return;
-  }
+    if (conversation.reviewRating !== null) {
+      await interaction.editReply({
+        embeds: [
+          reviewStatusEmbed(
+            "Avis déjà envoyé",
+            "Un seul avis peut être validé pour chaque ticket.",
+          ),
+        ],
+      });
+      return;
+    }
 
-  const review = interaction.fields.getTextInputValue("review-content").trim();
-  if (review.length < 5) {
-    await interaction.editReply({
-      embeds: [
-        reviewStatusEmbed(
-          "Avis trop court",
-          "Ajoute quelques mots avant de valider ton expérience.",
-        ),
-      ],
-    });
-    return;
-  }
+    const review = interaction.fields
+      .getTextInputValue("review-content")
+      .trim();
+    if (!review) {
+      await interaction.editReply({
+        embeds: [
+          reviewStatusEmbed(
+            "Avis vide",
+            "Écris au moins un caractère avant de continuer.",
+          ),
+        ],
+      });
+      return;
+    }
 
-  await interaction.editReply({
-    embeds: [reviewPreviewEmbed(context.rating, review)],
-    components: reviewPreviewComponents(context),
-  });
+    await interaction.editReply({
+      embeds: [reviewPreviewEmbed(context.rating, review)],
+      components: reviewPreviewComponents(context),
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, threadId, userId: interaction.user.id },
+      "Could not process mod mail review form",
+    );
+    await interaction
+      .editReply({
+        embeds: [
+          reviewStatusEmbed(
+            "Avis indisponible",
+            "Le formulaire n’a pas pu être traité. Réessaie dans un instant.",
+          ),
+        ],
+      })
+      .catch(() => undefined);
+  }
 }
 
 async function publishModmailReview(

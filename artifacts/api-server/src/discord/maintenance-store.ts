@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, lte } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import {
   db,
   maintenanceTable,
@@ -10,7 +10,7 @@ export type MaintenanceRecord = {
   service: MaintenanceService;
   message: string;
   reason: MaintenanceReason;
-  endsAt: Date;
+  endsAt: Date | null;
   updatedByUserId: string;
   updatedAt: Date;
 };
@@ -25,7 +25,7 @@ export async function getActiveMaintenance(
     .where(
       and(
         eq(maintenanceTable.service, service),
-        gt(maintenanceTable.endsAt, now),
+        or(isNull(maintenanceTable.endsAt), gt(maintenanceTable.endsAt, now)),
       ),
     )
     .limit(1);
@@ -39,7 +39,12 @@ export async function getActiveMaintenances(
   return db
     .select()
     .from(maintenanceTable)
-    .where(gt(maintenanceTable.endsAt, now));
+    .where(
+      or(
+        isNull(maintenanceTable.endsAt),
+        gt(maintenanceTable.endsAt, now),
+      ),
+    );
 }
 
 export async function setMaintenance(
@@ -47,7 +52,7 @@ export async function setMaintenance(
   values: {
     message: string;
     reason: MaintenanceReason;
-    endsAt: Date;
+    endsAt: Date | null;
     updatedByUserId: string;
   },
 ): Promise<void> {

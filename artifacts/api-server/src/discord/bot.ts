@@ -109,6 +109,12 @@ const SERVER_INFO_COMMAND_NAME = "info-serveur";
 const STAFF_ABSENCE_COMMAND_NAME = "absence-staff";
 const MAINTENANCE_COMMAND_NAME = "maintenance";
 const STATUS_COMMAND_NAME = "status";
+const MAINTENANCE_ALLOWED_USER_ID = "1140296215469240401";
+const STATUS_ALLOWED_USER_ID = "1140296215469240401";
+const STATUS_ALLOWED_ROLE_IDS = new Set([
+  "1529149444887543909",
+  "1530654006068645938",
+]);
 const STAFF_ABSENCE_FINISH_BUTTON_PREFIX = "staff-absence:finish:";
 const processingStaffAbsenceFinishes = new Set<string>();
 
@@ -323,7 +329,9 @@ const maintenanceCommand = new SlashCommandBuilder()
       .addChoices(
         { name: "Support", value: "support" },
         { name: "Recrutement", value: "recrutement" },
-        { name: "Tout le bot (support + recrutement)", value: "tout" },
+        { name: "Absences staff", value: "staff-absence" },
+        { name: "Site web Slyzz (suivi de statut)", value: "site-web" },
+        { name: "Tout (support + recrutement + absences + site)", value: "tout" },
         { name: "Avis de mise à jour (sans couper les services)", value: "annonce" },
       )
       .setRequired(true),
@@ -343,7 +351,7 @@ const maintenanceCommand = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName("fin")
-      .setDescription("Fin prévue au format JJ/MM/AAAA HH:mm, heure de Bruxelles")
+      .setDescription("Facultative : fin au format JJ/MM/AAAA HH:mm, heure de Bruxelles")
       .setMaxLength(20)
       .setRequired(false),
   )
@@ -357,10 +365,29 @@ const maintenanceCommand = new SlashCommandBuilder()
 
 const statusCommand = new SlashCommandBuilder()
   .setName(STATUS_COMMAND_NAME)
-  .setDescription("Affiche l’état du support et du recrutement");
+  .setDescription("Affiche l’état des services");
 
 function isPrimarySetupUser(userId: string): boolean {
   return AUTHORIZED_SETUP_USER_IDS.has(userId);
+}
+
+function interactionHasRole(
+  interaction: ChatInputCommandInteraction,
+  roleId: string,
+): boolean {
+  if (!interaction.inGuild()) {
+    return false;
+  }
+  const roles = interaction.member.roles;
+  return Array.isArray(roles)
+    ? roles.includes(roleId)
+    : roles.cache.has(roleId);
+}
+
+function maintenanceReopenText(endsAt: Date | null): string {
+  return endsAt
+    ? `Réouverture prévue : <t:${Math.floor(endsAt.getTime() / 1000)}:F> (<t:${Math.floor(endsAt.getTime() / 1000)}:R>).`
+    : "La maintenance restera active jusqu’à sa réactivation manuelle.";
 }
 
 function isAuthorizedSetupUser(
@@ -1052,6 +1079,19 @@ async function handleStaffAbsenceCommand(
         ),
       ],
       allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  const absenceMaintenance = await getActiveMaintenance("staff-absence");
+  if (absenceMaintenance) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Annonce d’absence temporairement indisponible",
+          `**Raison :** ${maintenanceReasonLabel(absenceMaintenance.reason)}\n${absenceMaintenance.message || "Aucune précision complémentaire."}\n\n${maintenanceReopenText(absenceMaintenance.endsAt)}`,
+        ),
+      ],
     });
     return;
   }
@@ -1825,14 +1865,11 @@ async function handleModalSubmit(
   await interaction.deferReply({ ephemeral: true });
   const recruitmentMaintenance = await getActiveMaintenance("recrutement");
   if (recruitmentMaintenance) {
-    const endTimestamp = Math.floor(
-      recruitmentMaintenance.endsAt.getTime() / 1000,
-    );
     await interaction.editReply({
       embeds: [
         errorEmbed(
           "Recrutement temporairement indisponible",
-          `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message}\n\nRéouverture prévue : <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+          `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message || "Aucune précision complémentaire."}\n\n${maintenanceReopenText(recruitmentMaintenance.endsAt)}`,
         ),
       ],
     });
@@ -2134,12 +2171,12 @@ export async function startDiscordBot(token: string): Promise<void> {
         } else if (interaction.commandName === RANK_DERANK_COMMAND_NAME) {
           await handleRoleActionCommand(interaction);
         } else if (interaction.commandName === MAINTENANCE_COMMAND_NAME) {
-          if (!isPrimarySetupUser(interaction.user.id)) {
+          if (interaction.user.id !== MAINTENANCE_ALLOWED_USER_ID) {
             await interaction.reply({
               embeds: [
                 errorEmbed(
                   "Accès refusé",
-                  "Seuls les administrateurs principaux peuvent modifier l’état des services.",
+                  "Cette commande est réservée au membre autorisé.",
                 ),
               ],
               ephemeral: true,
@@ -2148,7 +2185,24 @@ export async function startDiscordBot(token: string): Promise<void> {
             await handleMaintenanceCommand(interaction);
           }
         } else if (interaction.commandName === STATUS_COMMAND_NAME) {
-          await handleStatusCommand(interaction);
+          const canViewStatus =
+            interaction.user.id === STATUS_ALLOWED_USER_ID ||
+            [...STATUS_ALLOWED_ROLE_IDS].some((roleId) =>
+              interactionHasRole(interaction, roleId),
+            );
+          if (!canViewStatus) {
+            await interaction.reply({
+              embeds: [
+                errorEmbed(
+                  "Accès refusé",
+                  "Tu n’es pas autorisé à consulter l’état des services.",
+                ),
+              ],
+              ephemeral: true,
+            });
+          } else {
+            await handleStatusCommand(interaction);
+          }
         }
         return;
       }
@@ -2367,14 +2421,11 @@ export async function startDiscordBot(token: string): Promise<void> {
         const recruitmentMaintenance =
           await getActiveMaintenance("recrutement");
         if (recruitmentMaintenance) {
-          const endTimestamp = Math.floor(
-            recruitmentMaintenance.endsAt.getTime() / 1000,
-          );
           await interaction.reply({
             embeds: [
               errorEmbed(
                 "Recrutement temporairement indisponible",
-          `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message}\n\nRéouverture prévue : <t:${endTimestamp}:F> (<t:${endTimestamp}:R>).`,
+                `**Raison :** ${maintenanceReasonLabel(recruitmentMaintenance.reason)}\n${recruitmentMaintenance.message || "Aucune précision complémentaire."}\n\n${maintenanceReopenText(recruitmentMaintenance.endsAt)}`,
               ),
             ],
             ephemeral: true,

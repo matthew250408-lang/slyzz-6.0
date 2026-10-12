@@ -91,6 +91,12 @@ function discordTime(date: Date): string {
   return `<t:${Math.floor(date.getTime() / 1000)}:F> (<t:${Math.floor(date.getTime() / 1000)}:R>)`;
 }
 
+function maintenanceEndText(date: Date | null): string {
+  return date
+    ? `Fin prévue : ${discordTime(date)}`
+    : "Aucune date de fin — remise en ligne manuelle avec /maintenance.";
+}
+
 function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength
     ? value
@@ -111,7 +117,19 @@ function serviceState(
 
   return {
     name: label,
-    value: `🔴 **Maintenance temporaire**\n**Raison :** ${maintenanceReasonLabel(record.reason)}\n${truncate(record.message || "Aucune précision complémentaire.", 600)}\n\nFin prévue : ${discordTime(record.endsAt)}`,
+    value: `🔴 **Maintenance temporaire**\n**Raison :** ${maintenanceReasonLabel(record.reason)}\n${truncate(record.message || "Aucune précision complémentaire.", 600)}\n\n${maintenanceEndText(record.endsAt)}`,
+    inline: false,
+  };
+}
+
+function websiteServiceState(
+  record: MaintenanceRecord | undefined,
+): { name: string; value: string; inline: false } {
+  return {
+    name: "Site web Slyzz",
+    value: record
+      ? `🟠 **Maintenance déclarée — suivi uniquement**\nLe bot n’arrête pas le site web.\n**Raison :** ${maintenanceReasonLabel(record.reason)}\n${truncate(record.message || "Aucune précision complémentaire.", 500)}\n\n${maintenanceEndText(record.endsAt)}`
+      : "ℹ️ **État non vérifié par le bot**\nAucun site web n’est connecté à ce bot.",
     inline: false,
   };
 }
@@ -124,15 +142,17 @@ function statusEmbed(records: MaintenanceRecord[]): EmbedBuilder {
     .setColor(0xf2b2a8)
     .setTitle("État des services")
     .setDescription(
-      "Les maintenances expirent automatiquement à l’heure indiquée.",
+      "Une fin est facultative; sans date, la remise en ligne est manuelle. L’état du site Slyzz est indicatif : le bot ne le met pas hors ligne.",
     )
     .addFields(
       serviceState("Support", byService.get("support")),
       serviceState("Recrutement", byService.get("recrutement")),
+      serviceState("Absences staff", byService.get("staff-absence")),
+      websiteServiceState(byService.get("site-web")),
       {
         name: "Avis de mise à jour",
         value: notice
-          ? `🟠 **Information seulement — services non coupés**\n**Raison :** ${maintenanceReasonLabel(notice.reason)}\n${truncate(notice.message || "Aucune précision complémentaire.", 600)}\n\nFin prévue : ${discordTime(notice.endsAt)}`
+          ? `🟠 **Information seulement — services non coupés**\n**Raison :** ${maintenanceReasonLabel(notice.reason)}\n${truncate(notice.message || "Aucune précision complémentaire.", 600)}\n\n${maintenanceEndText(notice.endsAt)}`
           : "Aucun avis en cours.",
         inline: false,
       },
@@ -164,15 +184,35 @@ async function refreshRecruitmentMessages(client: Client): Promise<void> {
 
 function maintenanceTargets(service: string): MaintenanceService[] {
   if (service === "tout") {
-    return ["support", "recrutement"];
+    return ["support", "recrutement", "staff-absence", "site-web"];
   }
   if (service === "annonce") {
     return ["notice"];
   }
-  if (service === "support" || service === "recrutement") {
+  if (
+    service === "support" ||
+    service === "recrutement" ||
+    service === "staff-absence" ||
+    service === "site-web"
+  ) {
     return [service];
   }
   return [];
+}
+
+function maintenanceServiceLabel(service: string): string {
+  switch (service) {
+    case "support":
+      return "support";
+    case "recrutement":
+      return "recrutement";
+    case "staff-absence":
+      return "annonces d’absence staff";
+    case "site-web":
+      return "état du site web Slyzz";
+    default:
+      return service;
+  }
 }
 
 export async function handleMaintenanceCommand(
@@ -181,7 +221,9 @@ export async function handleMaintenanceCommand(
   const action = interaction.options.getString("action", true);
   const service = interaction.options.getString("service", true);
   await interaction.deferReply(
-    service === "annonce" ? {} : { flags: MessageFlags.Ephemeral },
+    service === "annonce" || service === "site-web"
+      ? {}
+      : { flags: MessageFlags.Ephemeral },
   );
   const services = maintenanceTargets(service);
   if (services.length === 0) {
@@ -194,7 +236,7 @@ export async function handleMaintenanceCommand(
   if (action === "stop") {
     const toClear: MaintenanceService[] =
       service === "tout"
-        ? ["support", "recrutement", "notice"]
+        ? ["support", "recrutement", "staff-absence", "site-web", "notice"]
         : services;
     await clearMaintenance(toClear);
     if (toClear.includes("recrutement")) {
@@ -207,8 +249,12 @@ export async function handleMaintenanceCommand(
           .setTitle("Maintenance terminée")
           .setDescription(
             service === "tout"
-              ? "Le support et le recrutement sont de nouveau en ligne. Les avis d’information ont aussi été effacés."
-              : `${service === "annonce" ? "L’avis de mise à jour a été retiré." : `Le service **${service}** est de nouveau en ligne.`}`,
+              ? "Le support, le recrutement et les annonces d’absence staff sont de nouveau en ligne. Le suivi du site web Slyzz et les avis d’information ont aussi été effacés."
+              : service === "annonce"
+                ? "L’avis de mise à jour a été retiré."
+                : service === "site-web"
+                  ? "Le suivi de maintenance du site web Slyzz a été retiré. Le bot ne contrôle pas sa disponibilité."
+                  : `Le service **${maintenanceServiceLabel(service)}** est de nouveau en ligne.`,
           ),
       ],
     });
@@ -225,7 +271,6 @@ export async function handleMaintenanceCommand(
     "autre",
   ] as const;
   if (
-    !endText ||
     !reasonValue ||
     !validReasons.includes(reasonValue as (typeof validReasons)[number]) ||
     (reasonValue === "autre" && !message)
@@ -234,20 +279,20 @@ export async function handleMaintenanceCommand(
       embeds: [
         errorEmbed(
           "Informations manquantes",
-          "Pour activer une maintenance, choisis une raison et indique une fin au format **JJ/MM/AAAA HH:mm**, heure de Bruxelles. Ajoute aussi une précision si la raison est « Autre ».",
+          "Pour activer une maintenance, choisis une raison. La date de fin est facultative; si elle est omise, le service restera suspendu jusqu’à sa réactivation manuelle. Ajoute une précision si la raison est « Autre ».",
         ),
       ],
     });
     return;
   }
 
-  const endsAt = parseBrusselsDateTime(endText);
-  if (!endsAt || endsAt.getTime() <= Date.now()) {
+  const endsAt = endText ? parseBrusselsDateTime(endText) : null;
+  if (endText && (!endsAt || endsAt.getTime() <= Date.now())) {
     await interaction.editReply({
       embeds: [
         errorEmbed(
           "Date de fin invalide",
-          "Indique une date future et réelle au format **JJ/MM/AAAA HH:mm**, heure de Bruxelles.",
+          "La date de fin doit être future et réelle au format **JJ/MM/AAAA HH:mm**, heure de Bruxelles.",
         ),
       ],
     });
@@ -272,17 +317,27 @@ export async function handleMaintenanceCommand(
 
   const serviceLabel =
     service === "tout"
-      ? "Le support et le recrutement"
+      ? "Le support, le recrutement, les annonces d’absence staff et l’état du site web Slyzz (suivi uniquement)"
       : service === "annonce"
         ? "L’avis de mise à jour"
-        : `Le service **${service}**`;
+        : `Le service **${maintenanceServiceLabel(service)}**`;
+  const websiteNote =
+    service === "site-web" || service === "tout"
+      ? "\n\nLe suivi du site Slyzz est informatif : le bot ne le met pas hors ligne."
+      : "";
   await interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(0xf2b2a8)
-        .setTitle(service === "annonce" ? "Avis programmé" : "Maintenance activée")
+        .setTitle(
+          service === "annonce"
+            ? "Avis programmé"
+            : service === "site-web"
+              ? "État du site Slyzz mis à jour"
+              : "Maintenance activée",
+        )
         .setDescription(
-          `${serviceLabel} ${service === "annonce" ? "sera affiché" : "est en maintenance"} jusqu’au ${discordTime(endsAt)}.\n\n**Raison :** ${maintenanceReasonLabel(reasonValue as (typeof validReasons)[number])}${message ? `\n${message}` : ""}`,
+          `${serviceLabel} ${service === "annonce" ? "sera affiché" : service === "site-web" ? "est marqué en maintenance" : "est en maintenance"}${endsAt ? ` jusqu’au ${discordTime(endsAt)}` : " sans date de fin; il faudra la terminer manuellement"}.\n\n**Raison :** ${maintenanceReasonLabel(reasonValue as (typeof validReasons)[number])}${message ? `\n${message}` : ""}${websiteNote}`,
         ),
     ],
   });

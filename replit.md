@@ -36,7 +36,8 @@ Bot Discord configurable pour gérer le recrutement, les conversations de modmai
 
 ## Product
 
-- Les administrateurs configurent le formulaire de recrutement : embed, bouton, questions préconfigurées ou personnalisées et salon de réception.
+- Les administrateurs configurent le recrutement depuis un panneau privé avec aperçu; les candidats voient un embed de recrutement mis en forme avec l’identité du serveur, les étapes, les thèmes du formulaire et son état.
+- Le formulaire propose quatre questions staff par défaut, reste personnalisable et accepte jusqu’à cinq questions; les anciennes configurations sont conservées et les anciens textes par défaut sont actualisés.
 - Les candidats envoient leur candidature via un formulaire Discord.
 - Members can open support conversations through modmail; moderators can claim, reply, and close conversations.
 - Authorized users can publish custom embeds with `/message`; `/info-bot` displays the bot version, developer, and last-modified date; `/info-serveur` summarizes the current server.
@@ -64,6 +65,7 @@ The command is limited to the primary administrators and users authorized for th
 ### Recrutement et absences
 
 - `/setup-inscription` conserve son nom pour compatibilité, mais configure le formulaire de recrutement. Il permet de personnaliser le message, le titre, le bouton, jusqu'à cinq questions et le salon qui reçoit les candidatures. Les questions de motivation, d'expérience, de disponibilité et de gestion des conflits sont proposées avec les questions personnalisées.
+- `/setup-permission` reste réservé aux administrateurs principaux. Son panneau privé permet d'ajouter ou retirer des membres avec des sélecteurs, ou de remplacer la liste complète par IDs; les membres autorisés ne peuvent pas modifier ces accès.
 - `/absence-staff date_debut date_fin raison` publie dans le salon `1559248976694353960` un embed rose qui mentionne le membre qui lance la commande et affiche son rôle le plus élevé, les dates au format `JJ/MM/AAAA`, la raison et le statut `En cours...`.
 - Seul l'auteur de l'absence peut utiliser le bouton `Terminer maintenant`. Le bot passe le statut à `Terminé`, désactive le bouton et lui envoie un DM. Si ses paramètres Discord bloquent les DM, le statut est tout de même mis à jour et le bot l'indique.
 - `/info-serveur` affiche le propriétaire, le nombre de membres, les dates et les principaux compteurs du serveur.

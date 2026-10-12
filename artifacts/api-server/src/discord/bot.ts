@@ -18,6 +18,7 @@ import {
   ActionRowBuilder,
   ChannelSelectMenuBuilder,
   StringSelectMenuBuilder,
+  UserSelectMenuBuilder,
   type ChatInputCommandInteraction,
   type ButtonInteraction,
   type ChannelSelectMenuInteraction,
@@ -25,6 +26,7 @@ import {
   type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
   type TextChannel,
+  type UserSelectMenuInteraction,
 } from "discord.js";
 import { logger } from "../lib/logger";
 import {
@@ -49,12 +51,17 @@ import {
   commandsHelpEmbed,
   permissionsEmbed,
   rankActionEmbed,
+  registrationEmbed,
   serverInfoEmbed,
   setupEmbed,
   successEmbed,
   staffAbsenceEmbed,
 } from "./embeds";
-import { REGISTRATION_BUTTON_ID, syncRegistrationMessage } from "./message";
+import {
+  REGISTRATION_BUTTON_ID,
+  registrationComponents,
+  syncRegistrationMessage,
+} from "./message";
 import {
   getInscriptionConfig,
   saveInscriptionConfig,
@@ -76,6 +83,9 @@ const MESSAGE_SETUP_BUTTON_ID = `${SETUP_PREFIX}message`;
 const BUTTON_SETUP_BUTTON_ID = `${SETUP_PREFIX}button`;
 const TITLE_SETUP_BUTTON_ID = `${SETUP_PREFIX}title`;
 const PERMISSIONS_SETUP_BUTTON_ID = `${SETUP_PREFIX}permissions`;
+const PREVIEW_SETUP_BUTTON_ID = `${SETUP_PREFIX}preview`;
+const ADD_PERMISSION_USER_SELECT_ID = `${SETUP_PREFIX}permissions:add`;
+const REMOVE_PERMISSION_USER_SELECT_ID = `${SETUP_PREFIX}permissions:remove`;
 const ADD_QUESTION_SETUP_BUTTON_ID = `${SETUP_PREFIX}add-question`;
 const ADD_QUESTION_MODAL_ID = `${SETUP_PREFIX}add-question-modal`;
 const PERMISSIONS_MODAL_ID = `${SETUP_PREFIX}permissions-modal`;
@@ -140,11 +150,11 @@ const setupCommand = addSetupOptions(
 
 const setupPermissionCommand = new SlashCommandBuilder()
   .setName(SETUP_PERMISSION_COMMAND_NAME)
-  .setDescription("Gère les autorisations des commandes")
+  .setDescription("Gère les accès à la configuration du recrutement")
   .addStringOption((option) =>
     option
       .setName("membres")
-      .setDescription("IDs des membres autorisés, séparés par des virgules")
+      .setDescription("Remplace la liste complète avec des IDs séparés par des virgules")
       .setMaxLength(1000)
       .setRequired(false),
   );
@@ -310,16 +320,16 @@ function permissionsModal(config: InscriptionConfigData): ModalBuilder {
   const value = config.authorizedUserIds.join(", ");
   return new ModalBuilder()
     .setCustomId(PERMISSIONS_MODAL_ID)
-    .setTitle("Gérer les accès")
+    .setTitle("Remplacer la liste d’accès")
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("authorized-user-ids")
-          .setLabel("IDs autorisés, séparés par des virgules")
+          .setLabel("IDs des membres, séparés par des virgules")
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(false)
           .setMaxLength(1000)
-          .setPlaceholder("123456789012345678, 987654321098765432")
+          .setPlaceholder("Laisse vide pour retirer tous les accès délégués")
           .setValue(value.slice(0, 1000)),
       ),
     );
@@ -462,6 +472,10 @@ function setupPanelComponents(
         .setCustomId(ADD_QUESTION_SETUP_BUTTON_ID)
         .setLabel("Ajouter une question")
         .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(PREVIEW_SETUP_BUTTON_ID)
+        .setLabel("Aperçu")
+        .setStyle(ButtonStyle.Success),
     ),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       questionsMenu(selectedQuestions, customQuestionLabels),
@@ -472,15 +486,34 @@ function setupPanelComponents(
   ];
 }
 
-function permissionsPanelComponents(): [
+function permissionsPanelComponents(
+  config: InscriptionConfigData,
+): [
+  ActionRowBuilder<UserSelectMenuBuilder>,
+  ActionRowBuilder<UserSelectMenuBuilder>,
   ActionRowBuilder<ButtonBuilder>,
 ] {
   return [
+    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+      new UserSelectMenuBuilder()
+        .setCustomId(ADD_PERMISSION_USER_SELECT_ID)
+        .setPlaceholder("Ajouter des membres autorisés…")
+        .setMinValues(1)
+        .setMaxValues(10),
+    ),
+    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+      new UserSelectMenuBuilder()
+        .setCustomId(REMOVE_PERMISSION_USER_SELECT_ID)
+        .setPlaceholder("Retirer des membres autorisés…")
+        .setMinValues(1)
+        .setMaxValues(10)
+        .setDisabled(config.authorizedUserIds.length === 0),
+    ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(PERMISSIONS_SETUP_BUTTON_ID)
-        .setLabel("Modifier les membres autorisés")
-        .setStyle(ButtonStyle.Primary),
+        .setLabel("Remplacer la liste par IDs")
+        .setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -623,14 +656,10 @@ async function handlePermissionCommand(
     await saveInscriptionConfig(interaction.guild.id, {
       authorizedUserIds,
     });
+    const updatedConfig = { ...config, authorizedUserIds };
     await interaction.reply({
-      embeds: [
-        permissionsEmbed({
-          ...config,
-          authorizedUserIds,
-        }),
-      ],
-      components: permissionsPanelComponents(),
+      embeds: [permissionsEmbed(updatedConfig)],
+      components: permissionsPanelComponents(updatedConfig),
       ephemeral: true,
     });
     return;
@@ -638,8 +667,60 @@ async function handlePermissionCommand(
 
   await interaction.reply({
     embeds: [permissionsEmbed(config)],
-    components: permissionsPanelComponents(),
+    components: permissionsPanelComponents(config),
     ephemeral: true,
+  });
+}
+
+async function handlePermissionUserSelect(
+  interaction: UserSelectMenuInteraction,
+  action: "add" | "remove",
+): Promise<void> {
+  if (
+    !interaction.guild ||
+    !isPrimarySetupUser(interaction.user.id)
+  ) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Accès refusé",
+          "Seuls les administrateurs principaux peuvent gérer ces accès.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const config = await getInscriptionConfig(interaction.guild.id);
+  const selectedIds = interaction.values.filter(
+    (userId) => !AUTHORIZED_SETUP_USER_IDS.has(userId),
+  );
+  const authorizedUserIds =
+    action === "add"
+      ? [...new Set([...config.authorizedUserIds, ...selectedIds])]
+      : config.authorizedUserIds.filter(
+          (userId) => !selectedIds.includes(userId),
+        );
+
+  if (authorizedUserIds.length > 50) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Limite atteinte",
+          "La liste ne peut pas dépasser 50 membres autorisés. Retire d'abord quelques accès.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await saveInscriptionConfig(interaction.guild.id, { authorizedUserIds });
+  const updatedConfig = { ...config, authorizedUserIds };
+  await interaction.update({
+    embeds: [permissionsEmbed(updatedConfig)],
+    components: permissionsPanelComponents(updatedConfig),
   });
 }
 
@@ -1532,33 +1613,48 @@ async function handleModalSubmit(
 
   if (interaction.customId === `${SETUP_PREFIX}message-modal`) {
     await interaction.deferReply({ ephemeral: true });
-    await saveInscriptionConfig(interaction.guild.id, {
+    const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
       messageContent: interaction.fields.getTextInputValue("message-content"),
     });
+    await syncAfterSetup(interaction);
     await interaction.editReply({
-      embeds: [await syncAfterSetup(interaction)],
+      embeds: [setupEmbed(updatedConfig)],
+      components: setupPanelComponents(
+        updatedConfig.questions,
+        updatedConfig.customQuestions,
+      ),
     });
     return;
   }
 
   if (interaction.customId === `${SETUP_PREFIX}button-modal`) {
     await interaction.deferReply({ ephemeral: true });
-    await saveInscriptionConfig(interaction.guild.id, {
+    const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
       buttonLabel: interaction.fields.getTextInputValue("button-label").trim(),
     });
+    await syncAfterSetup(interaction);
     await interaction.editReply({
-      embeds: [await syncAfterSetup(interaction)],
+      embeds: [setupEmbed(updatedConfig)],
+      components: setupPanelComponents(
+        updatedConfig.questions,
+        updatedConfig.customQuestions,
+      ),
     });
     return;
   }
 
   if (interaction.customId === `${SETUP_PREFIX}title-modal`) {
     await interaction.deferReply({ ephemeral: true });
-    await saveInscriptionConfig(interaction.guild.id, {
+    const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
       embedTitle: interaction.fields.getTextInputValue("embed-title").trim(),
     });
+    await syncAfterSetup(interaction);
     await interaction.editReply({
-      embeds: [await syncAfterSetup(interaction)],
+      embeds: [setupEmbed(updatedConfig)],
+      components: setupPanelComponents(
+        updatedConfig.questions,
+        updatedConfig.customQuestions,
+      ),
     });
     return;
   }
@@ -1567,18 +1663,12 @@ async function handleModalSubmit(
     await interaction.deferReply({ ephemeral: true });
     const value = interaction.fields.getTextInputValue("authorized-user-ids");
     const authorizedUserIds = parseAuthorizedUserIds(value);
-    await saveInscriptionConfig(interaction.guild.id, {
+    const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
       authorizedUserIds,
     });
     await interaction.editReply({
-      embeds: [
-        successEmbed(
-          "Accès enregistrés",
-          authorizedUserIds.length > 0
-            ? `Les **${authorizedUserIds.length} membres** ajoutés peuvent maintenant utiliser les commandes de configuration.`
-            : "Aucun membre supplémentaire n'a été ajouté. Les deux administrateurs principaux gardent toujours l'accès.",
-        ),
-      ],
+      embeds: [permissionsEmbed(updatedConfig)],
+      components: permissionsPanelComponents(updatedConfig),
     });
     return;
   }
@@ -1626,19 +1716,16 @@ async function handleModalSubmit(
         .slice(0, availableSlots)
         .map((label) => customQuestionKey(label)),
     ];
-    await saveInscriptionConfig(interaction.guild.id, {
+    const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
       questions: selectedQuestions,
       customQuestions: [...config.customQuestions, ...newLabels],
     });
     await interaction.editReply({
-      embeds: [
-        successEmbed(
-          newLabels.length > 1 ? "Questions ajoutées" : "Question ajoutée",
-          availableSlots >= newLabels.length
-            ? `**${newLabels.length} questions** ont été enregistrées et ajoutées au recrutement.`
-            : `**${newLabels.length} questions** ont été enregistrées. Discord limite le formulaire à 5 questions ; les questions restantes sont disponibles dans le menu après avoir retiré une question.`,
-        ),
-      ],
+      embeds: [setupEmbed(updatedConfig)],
+      components: setupPanelComponents(
+        updatedConfig.questions,
+        updatedConfig.customQuestions,
+      ),
     });
     return;
   }
@@ -1740,7 +1827,7 @@ async function handleQuestionsSelection(
     });
     return;
   }
-  await saveInscriptionConfig(interaction.guild.id, {
+  const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
     questions: interaction.values,
   });
 
@@ -1750,13 +1837,11 @@ async function handleQuestionsSelection(
   }
 
   await interaction.editReply({
-    embeds: [
-      successEmbed(
-        "Questions enregistrées",
-        "Le message de recrutement a été mis à jour.",
-      ),
-    ],
-    components: [],
+    embeds: [setupEmbed(updatedConfig)],
+    components: setupPanelComponents(
+      updatedConfig.questions,
+      updatedConfig.customQuestions,
+    ),
   });
 }
 
@@ -1792,7 +1877,7 @@ async function handleResponseChannelSelection(
 
   await interaction.deferUpdate();
   const channelId = interaction.values[0];
-  await saveInscriptionConfig(interaction.guild.id, {
+  const updatedConfig = await saveInscriptionConfig(interaction.guild.id, {
     responseChannelId: channelId,
   });
   const channel = interaction.channel;
@@ -1801,13 +1886,11 @@ async function handleResponseChannelSelection(
   }
 
   await interaction.editReply({
-    embeds: [
-      successEmbed(
-        "Salon enregistré",
-        `Les réponses seront envoyées dans <#${channelId}>.`,
-      ),
-    ],
-    components: [],
+    embeds: [setupEmbed(updatedConfig)],
+    components: setupPanelComponents(
+      updatedConfig.questions,
+      updatedConfig.customQuestions,
+    ),
   });
 }
 
@@ -1825,7 +1908,13 @@ function memberRegistrationModal(
           .setCustomId(`question:${index}`)
           .setLabel(questionLabel(questionId).slice(0, 45))
           .setStyle(
-            questionId === "motivation" || questionId === "discovery"
+            [
+              "motivation",
+              "discovery",
+              "staff-motivation",
+              "staff-experience",
+              "staff-scenario",
+            ].includes(questionId)
               ? TextInputStyle.Paragraph
               : TextInputStyle.Short,
           )
@@ -1954,6 +2043,47 @@ export async function startDiscordBot(token: string): Promise<void> {
         isModmailButton(interaction.customId)
       ) {
         await handleModmailButton(interaction, client);
+        return;
+      }
+
+      if (
+        interaction.isButton() &&
+        interaction.customId === PREVIEW_SETUP_BUTTON_ID
+      ) {
+        if (
+          !interaction.guild ||
+          !(await isAuthorizedSetupUserForGuild(
+            interaction.user.id,
+            interaction.guild.id,
+          ))
+        ) {
+          await interaction.reply({
+            embeds: [
+              errorEmbed(
+                "Accès refusé",
+                "Tu n'es pas autorisé à prévisualiser ce recrutement.",
+              ),
+            ],
+            ephemeral: true,
+          });
+          return;
+        }
+
+        const config = await getInscriptionConfig(interaction.guild.id);
+        await interaction.reply({
+          embeds: [
+            registrationEmbed(
+              config.embedTitle,
+              config.messageContent,
+              config.buttonLabel,
+              config.questions,
+              interaction.guild,
+              Boolean(config.responseChannelId && config.questions.length > 0),
+            ),
+          ],
+          components: [registrationComponents(config.buttonLabel, true)[0]],
+          ephemeral: true,
+        });
         return;
       }
 
@@ -2138,6 +2268,17 @@ export async function startDiscordBot(token: string): Promise<void> {
       if (interaction.isStringSelectMenu()) {
         if (interaction.customId === QUESTION_SELECT_ID) {
           await handleQuestionsSelection(interaction);
+        }
+      }
+
+      if (interaction.isUserSelectMenu()) {
+        if (interaction.customId === ADD_PERMISSION_USER_SELECT_ID) {
+          await handlePermissionUserSelect(interaction, "add");
+          return;
+        }
+        if (interaction.customId === REMOVE_PERMISSION_USER_SELECT_ID) {
+          await handlePermissionUserSelect(interaction, "remove");
+          return;
         }
       }
 

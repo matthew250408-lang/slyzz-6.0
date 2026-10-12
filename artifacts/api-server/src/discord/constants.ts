@@ -1,11 +1,18 @@
 export const DEFAULT_MESSAGE = [
-  "📋 **Recrutement staff**",
+  "Tu apprécies l’ambiance du serveur et souhaites contribuer à la faire vivre ? L’équipe recherche des personnes motivées, respectueuses et prêtes à s’impliquer.",
   "",
-  "Tu souhaites rejoindre l'équipe ? Clique sur le bouton ci-dessous et remplis le formulaire de candidature.",
+  "Prends le temps de répondre avec sincérité : chaque candidature est étudiée avec attention.",
 ].join("\n");
 
-export const DEFAULT_BUTTON_LABEL = "📩 Candidater";
-export const DEFAULT_EMBED_TITLE = "📋 Recrutement staff";
+export const DEFAULT_BUTTON_LABEL = "📝 Candidater";
+export const DEFAULT_EMBED_TITLE = "Rejoins l’équipe du staff";
+export const LEGACY_DEFAULT_MESSAGE = [
+  "🎫 **Inscription**",
+  "",
+  "Bienvenue ! Pour rejoindre notre communauté, clique sur le bouton ci-dessous et remplis le formulaire.",
+].join("\n");
+export const LEGACY_DEFAULT_BUTTON_LABEL = "📝 S'inscrire";
+export const LEGACY_DEFAULT_EMBED_TITLE = "🎫 Inscription";
 export const BOT_VERSION = "6.0";
 export const BOT_DEVELOPER_ID = "1140296215469240401";
 export const BOT_LAST_MODIFIED = "12 octobre 2026";
@@ -50,21 +57,28 @@ export const AVAILABLE_QUESTIONS = [
   },
   {
     id: "staff-motivation",
-    label: "Pourquoi souhaites-tu rejoindre l'équipe staff ?",
+    label: "Pourquoi rejoindre l'équipe staff ?",
   },
   {
     id: "staff-experience",
-    label: "Quelle expérience as-tu en modération ou en animation ?",
+    label: "Quelle expérience en modération as-tu ?",
   },
   {
     id: "staff-availability",
-    label: "Quels sont tes jours et horaires de disponibilité ?",
+    label: "Quand es-tu disponible ?",
   },
   {
     id: "staff-scenario",
-    label: "Comment réagirais-tu face à un conflit entre membres ?",
+    label: "Comment gères-tu un conflit entre membres ?",
   },
 ] as const;
+
+export const DEFAULT_RECRUITMENT_QUESTIONS = [
+  "staff-motivation",
+  "staff-experience",
+  "staff-availability",
+  "staff-scenario",
+];
 
 export type QuestionId = (typeof AVAILABLE_QUESTIONS)[number]["id"];
 

@@ -15,13 +15,16 @@ function registrationButton(label: string) {
   return new ButtonBuilder()
     .setCustomId(REGISTRATION_BUTTON_ID)
     .setLabel(label)
-    .setStyle(ButtonStyle.Primary);
+    .setStyle(ButtonStyle.Success);
 }
 
-export function registrationComponents(buttonLabel: string) {
+export function registrationComponents(
+  buttonLabel: string,
+  disabled = false,
+) {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      registrationButton(buttonLabel),
+      registrationButton(buttonLabel).setDisabled(disabled),
     ),
   ];
 }
@@ -58,8 +61,22 @@ export async function syncRegistrationMessage(
   }
 
   const payload = {
-    embeds: [registrationEmbed(config.embedTitle, config.messageContent)],
-    components: registrationComponents(config.buttonLabel),
+    embeds: [
+      registrationEmbed(
+        config.embedTitle,
+        config.messageContent,
+        config.buttonLabel,
+        config.questions,
+        guild,
+        Boolean(config.responseChannelId && config.questions.length > 0),
+      ),
+    ],
+    components: [
+      registrationComponents(
+        config.buttonLabel,
+        !config.responseChannelId || config.questions.length === 0,
+      )[0],
+    ],
   };
 
   if (existingMessage) {

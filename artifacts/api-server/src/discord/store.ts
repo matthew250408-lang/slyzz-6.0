@@ -9,6 +9,10 @@ import {
   DEFAULT_BUTTON_LABEL,
   DEFAULT_EMBED_TITLE,
   DEFAULT_MESSAGE,
+  DEFAULT_RECRUITMENT_QUESTIONS,
+  LEGACY_DEFAULT_BUTTON_LABEL,
+  LEGACY_DEFAULT_EMBED_TITLE,
+  LEGACY_DEFAULT_MESSAGE,
 } from "./constants";
 
 export type InscriptionConfigData = {
@@ -28,7 +32,7 @@ const defaultConfig: InscriptionConfigData = {
   embedTitle: DEFAULT_EMBED_TITLE,
   buttonLabel: DEFAULT_BUTTON_LABEL,
   authorizedUserIds: [],
-  questions: [],
+  questions: [...DEFAULT_RECRUITMENT_QUESTIONS],
   customQuestions: [],
   responseChannelId: null,
   registrationChannelId: null,
@@ -83,15 +87,28 @@ function normalizeAuthorizedUserIds(value: unknown): string[] {
 
 function toConfig(row: InscriptionConfig | undefined): InscriptionConfigData {
   if (!row) {
-    return { ...defaultConfig, questions: [] };
+    return { ...defaultConfig, questions: [...DEFAULT_RECRUITMENT_QUESTIONS] };
   }
 
+  const questions = normalizeQuestions(row.questions);
   return {
-    messageContent: row.messageContent,
-    embedTitle: row.embedTitle,
-    buttonLabel: row.buttonLabel,
+    messageContent:
+      row.messageContent === LEGACY_DEFAULT_MESSAGE
+        ? DEFAULT_MESSAGE
+        : row.messageContent,
+    embedTitle:
+      row.embedTitle === LEGACY_DEFAULT_EMBED_TITLE
+        ? DEFAULT_EMBED_TITLE
+        : row.embedTitle,
+    buttonLabel:
+      row.buttonLabel === LEGACY_DEFAULT_BUTTON_LABEL
+        ? DEFAULT_BUTTON_LABEL
+        : row.buttonLabel,
     authorizedUserIds: normalizeAuthorizedUserIds(row.authorizedUserIds),
-    questions: normalizeQuestions(row.questions),
+    questions:
+      questions.length > 0
+        ? questions
+        : [...DEFAULT_RECRUITMENT_QUESTIONS],
     customQuestions: normalizeCustomQuestions(row.customQuestions),
     responseChannelId: row.responseChannelId,
     registrationChannelId: row.registrationChannelId,

@@ -200,97 +200,154 @@ export function errorEmbed(
 export function setupEmbed(
   config: InscriptionConfigData,
 ): EmbedBuilder {
+  const ready = config.questions.length > 0 && config.responseChannelId;
+  const questionList = config.questions
+    .map((question, index) => `\`${String(index + 1).padStart(2, "0")}\` ${questionLabel(question)}`)
+    .join("\n");
+
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
+    .setAuthor({ name: "Slyzz • ESPACE RECRUTEMENT" })
+    .setTitle("Configuration des candidatures")
     .setDescription(
-      "Configure ici le formulaire de **recrutement** : son **message**, son **titre**, son **bouton**, ses **questions** et le **salon de réception**.",
+      "Prépare un parcours clair et accueillant pour les futurs membres du staff. Les modifications sont enregistrées automatiquement.",
     )
     .addFields(
       {
-        name: "Message de recrutement",
-        value: truncate(config.messageContent, 1024),
-        inline: false,
-      },
-      {
-        name: "Titre de l'embed",
-        value: truncate(config.embedTitle, 256),
+        name: "🪧 Titre",
+        value: truncate(config.embedTitle || "Non défini", 256),
         inline: true,
       },
       {
-        name: "Bouton de candidature",
-        value: truncate(config.buttonLabel, 1024),
+        name: "🔘 Bouton",
+        value: truncate(config.buttonLabel || "Non défini", 80),
         inline: true,
       },
       {
-        name: "Questions de candidature",
-        value:
-          truncate(
-            config.questions.map(questionLabel).join(", "),
-            1024,
-          ) || "Aucune",
-        inline: false,
-      },
-      {
-        name: "Salon des réponses",
+        name: "📬 Réponses reçues dans",
         value: config.responseChannelId
           ? `<#${config.responseChannelId}>`
-          : "Non configuré",
+          : "À configurer",
         inline: true,
       },
-    );
+      {
+        name: `🧩 Questions sélectionnées · ${config.questions.length}/5`,
+        value: questionList || "Choisis les questions que tu veux poser.",
+        inline: false,
+      },
+      {
+        name: "✍️ Message affiché aux candidats",
+        value: truncate(config.messageContent || "Aucun message défini.", 900),
+        inline: false,
+      },
+      {
+        name: "État du formulaire",
+        value: ready
+          ? "✅ Prêt à recevoir des candidatures"
+          : "🟠 Choisis au moins une question et un salon de réception",
+        inline: false,
+      },
+    )
+    .setFooter({
+      text: "Les changements sont enregistrés automatiquement • Aperçu disponible ci-dessous",
+    });
 }
 
 export function permissionsEmbed(
   config: InscriptionConfigData,
 ): EmbedBuilder {
   const primaryAdministrators = [...AUTHORIZED_SETUP_USER_IDS]
-    .map((userId) => `<@${userId}> (\`${userId}\`)`)
+    .map((userId) => `<@${userId}>`)
     .join("\n");
   const authorizedMembers =
     config.authorizedUserIds.length > 0
       ? truncate(
           config.authorizedUserIds
-            .map((userId) => `<@${userId}> (\`${userId}\`)`)
+            .map((userId, index) => `\`${String(index + 1).padStart(2, "0")}\` <@${userId}>`)
             .join("\n"),
           1024,
         )
-      : "Aucun membre supplémentaire";
+      : "Personne pour le moment — les deux administrateurs principaux conservent toujours l’accès.";
 
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("Gestion des autorisations")
+    .setAuthor({ name: "Slyzz • CONTRÔLE DES ACCÈS" })
+    .setTitle("Qui peut gérer le recrutement ?")
     .setDescription(
-      "Seuls les **administrateurs principaux** peuvent modifier cette liste. Les membres ajoutés pourront utiliser les **commandes de configuration** du serveur.",
+      "Accorde l’accès de configuration aux personnes de confiance. Seuls les administrateurs principaux peuvent modifier cette liste.",
     )
     .addFields(
       {
-        name: "Administrateurs principaux",
+        name: "🔐 Administrateurs principaux",
         value: primaryAdministrators,
         inline: false,
       },
       {
-        name: "Membres autorisés",
+        name: `🛠️ Membres autorisés · ${config.authorizedUserIds.length}`,
         value: authorizedMembers,
         inline: false,
       },
       {
-        name: "Format accepté",
-        value: "Ajoute les IDs séparés par des **virgules**.",
+        name: "ℹ️ Portée de l’accès",
+        value:
+          "Les personnes autorisées peuvent modifier le message, le bouton, les questions et le salon des candidatures. Elles ne peuvent pas modifier cette liste.",
         inline: false,
       },
-    );
+    )
+    .setFooter({
+      text: "Utilise les sélecteurs ci-dessous pour ajouter ou retirer des membres.",
+    });
 }
 
 export function registrationEmbed(
   title: string,
   messageContent: string,
+  buttonLabel: string,
+  questions: string[],
+  guild?: Guild,
+  isReady = false,
 ): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setDescription(messageContent);
+    .setTitle(title.trim() || DEFAULT_EMBED_TITLE)
+    .setDescription(messageContent)
+    .addFields(
+      {
+        name: "📋 Comment candidater",
+        value: `**01**  Clique sur **${buttonLabel}** ci-dessous.\n**02**  Réponds aux questions avec sincérité.\n**03**  Envoie ta candidature à l’équipe.`,
+        inline: false,
+      },
+      {
+        name: "🧩 Le formulaire",
+        value:
+          questions.length > 0
+            ? questions.map((question) => `• ${questionLabel(question)}`).join("\n")
+            : "Le formulaire de candidature est en préparation.",
+        inline: false,
+      },
+      {
+        name: "📣 État",
+        value: isReady
+          ? "🟢 Les candidatures sont ouvertes."
+          : "🟠 Ouverture prochaine — l’équipe termine la configuration.",
+        inline: false,
+      },
+    )
+    .setFooter({
+      text: "RECRUTEMENT • Merci de prendre le temps de répondre avec soin",
+    });
 
-  if (title.trim() && title !== DEFAULT_EMBED_TITLE) {
-    embed.setTitle(title);
+  if (guild) {
+    const iconURL = guild.iconURL({ size: 256 });
+    embed.setAuthor({
+      name: `${guild.name} • ${isReady ? "CANDIDATURES OUVERTES" : "RECRUTEMENT EN PRÉPARATION"}`,
+    });
+    const bannerURL = guild.bannerURL({ size: 1024 });
+    if (bannerURL) {
+      embed.setImage(bannerURL);
+    } else if (iconURL) {
+      embed.setThumbnail(iconURL);
+    }
   }
 
   return embed;
@@ -302,19 +359,31 @@ export function applicationEmbed(
 ): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("Nouvelle candidature au recrutement")
-    .setDescription(`Candidature envoyée par <@${user.id}>`)
+    .setAuthor({
+      name: "NOUVELLE CANDIDATURE • RECRUTEMENT",
+    })
+    .setTitle(user.globalName ?? user.username)
+    .setDescription(
+      `Candidature reçue de <@${user.id}>.\n${answers.length} réponses transmises à l’équipe.`,
+    )
     .addFields(
       {
-        name: "Utilisateur",
-        value: `${user.tag}\n\`${user.id}\``,
-        inline: false,
+        name: "Candidat",
+        value: `<@${user.id}>\n\`${user.id}\``,
+        inline: true,
       },
-      ...answers.map(({ questionId, answer }) => ({
-        name: questionLabel(questionId),
+      {
+        name: "Réponses",
+        value: `${answers.length} / 5`,
+        inline: true,
+      },
+      ...answers.map(({ questionId, answer }, index) => ({
+        name: `${String(index + 1).padStart(2, "0")} · ${questionLabel(questionId)}`,
         value: truncate(answer || "Aucune réponse", 1024),
         inline: false,
       })),
     )
+    .setThumbnail(user.displayAvatarURL({ size: 512 }))
+    .setFooter({ text: "CANDIDATURE • À étudier par l’équipe" })
     .setTimestamp();
 }

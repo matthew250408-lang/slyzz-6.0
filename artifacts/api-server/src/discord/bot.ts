@@ -2513,6 +2513,29 @@ export async function startDiscordBot(token: string): Promise<void> {
         return;
       }
 
+      const botMentionPattern = new RegExp(`<@!?${client.user.id}>`, "g");
+      const botMentions = message.content.match(botMentionPattern) ?? [];
+      if (
+        botMentions.length !== 1 ||
+        message.content.replace(botMentionPattern, "").trim().length > 0 ||
+        message.attachments.size > 0 ||
+        message.stickers.size > 0
+      ) {
+        return;
+      }
+
+      if (message.mentions.repliedUser?.id === client.user.id) {
+        return;
+      }
+      if (message.reference?.messageId) {
+        const referencedMessage = await message
+          .fetchReference()
+          .catch(() => null);
+        if (referencedMessage?.author.id === client.user.id) {
+          return;
+        }
+      }
+
       await message.reply({
         embeds: [commandsHelpEmbed(`<@${message.author.id}>`)],
         allowedMentions: { repliedUser: false },

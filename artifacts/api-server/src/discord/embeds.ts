@@ -118,6 +118,11 @@ export function staffAbsenceEmbed(
         value: `${REASON_EMOJI} ${reason.trim()}`,
         inline: false,
       },
+      {
+        name: "Statut",
+        value: "⏳ En cours...",
+        inline: false,
+      },
     )
     .setThumbnail(member.displayAvatarURL())
     .setTimestamp();

@@ -19,6 +19,7 @@ import {
   ChannelSelectMenuBuilder,
   StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
+  type ButtonInteraction,
   type ChannelSelectMenuInteraction,
   type GuildMember,
   type ModalSubmitInteraction,
@@ -36,6 +37,7 @@ import {
   RANK_ANNOUNCEMENT_CHANNEL_ID,
   RANK_ANNOUNCEMENT_ROLE_ID,
   STAFF_ABSENCE_ACCESS_ROLE_ID,
+  STAFF_ABSENCE_CHANNEL_ID,
   customQuestionKey,
   isCustomQuestionKey,
   questionLabel,
@@ -85,6 +87,8 @@ const BOT_INFO_COMMAND_NAME = "info-bot";
 const RANK_DERANK_COMMAND_NAME = "rank-derank";
 const SERVER_INFO_COMMAND_NAME = "info-serveur";
 const STAFF_ABSENCE_COMMAND_NAME = "absence-staff";
+const STAFF_ABSENCE_FINISH_BUTTON_PREFIX = "staff-absence:finish:";
+const processingStaffAbsenceFinishes = new Set<string>();
 
 function addSetupOptions(command: SlashCommandBuilder) {
   return command
@@ -940,21 +944,179 @@ async function handleStaffAbsenceCommand(
     return;
   }
 
+  const absenceChannel = await interaction.client.channels
+    .fetch(STAFF_ABSENCE_CHANNEL_ID)
+    .catch(() => null);
+  if (
+    !absenceChannel ||
+    absenceChannel.type !== ChannelType.GuildText ||
+    absenceChannel.guildId !== guild.id
+  ) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Salon indisponible",
+          `Le salon d'absence <#${STAFF_ABSENCE_CHANNEL_ID}> est introuvable ou n'est pas un salon textuel.`,
+        ),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  try {
+    const finishButton = new ButtonBuilder()
+      .setCustomId(`${STAFF_ABSENCE_FINISH_BUTTON_PREFIX}${member.id}`)
+      .setLabel("Terminer maintenant")
+      .setStyle(ButtonStyle.Success);
+    const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      finishButton,
+    );
+
+    await absenceChannel.send({
+      content: `<@${member.id}>`,
+      embeds: [staffAbsenceEmbed(member, startDateText, endDateText, reason)],
+      components: [buttonRow],
+      allowedMentions: { parse: [], users: [member.id] },
+    });
+    await interaction.editReply({
+      embeds: [
+        successEmbed(
+          "Absence annoncée",
+          `Ton absence a été publiée dans <#${STAFF_ABSENCE_CHANNEL_ID}>.`,
+        ),
+      ],
+      allowedMentions: { parse: [] },
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, guildId: guild.id, userId: member.id },
+      "Could not publish staff absence",
+    );
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          "Publication échouée",
+          "Impossible de publier l'absence. Vérifie les permissions de Biscotto dans le salon dédié.",
+        ),
+      ],
+    });
+  }
+}
+
+async function handleStaffAbsenceFinishButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const allowedUserId = interaction.customId.slice(
+    STAFF_ABSENCE_FINISH_BUTTON_PREFIX.length,
+  );
+  if (interaction.user.id !== allowedUserId) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Action réservée",
+          "Seule la personne qui a déclaré cette absence peut la terminer.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (processingStaffAbsenceFinishes.has(interaction.message.id)) {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Action en cours",
+          "Cette absence est déjà en train d'être terminée.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const currentEmbed = interaction.message.embeds[0];
+  const statusIndex =
+    currentEmbed?.fields.findIndex((field) => field.name === "Statut") ?? -1;
+  if (statusIndex < 0 || currentEmbed.fields[statusIndex]?.value !== "⏳ En cours...") {
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Absence déjà terminée",
+          "Cette absence n'est plus en cours.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  processingStaffAbsenceFinishes.add(interaction.message.id);
+  try {
+    const updatedEmbed = EmbedBuilder.from(currentEmbed);
+    updatedEmbed.spliceFields(statusIndex, 1, {
+      name: "Statut",
+      value: "✅ Terminé",
+      inline: false,
+    });
+    const disabledButton = new ButtonBuilder()
+      .setCustomId(interaction.customId)
+      .setLabel("Terminé")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+    const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      disabledButton,
+    );
+
+    await interaction.update({
+      embeds: [updatedEmbed],
+      components: [buttonRow],
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, messageId: interaction.message.id },
+      "Could not mark staff absence as finished",
+    );
+    await interaction.reply({
+      embeds: [
+        errorEmbed(
+          "Mise à jour échouée",
+          "Impossible de mettre à jour le statut de cette absence.",
+        ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  } finally {
+    processingStaffAbsenceFinishes.delete(interaction.message.id);
+  }
+
+  let dmSent = true;
+  try {
+    await interaction.user.send(
+      `Ton absence dans **${interaction.guild?.name ?? "le serveur"}** a été marquée comme terminée.`,
+    );
+  } catch (error) {
+    dmSent = false;
+    logger.info(
+      { err: error, userId: interaction.user.id },
+      "Could not send staff absence completion DM",
+    );
+  }
   await interaction.followUp({
-    embeds: [staffAbsenceEmbed(member, startDateText, endDateText, reason)],
-    allowedMentions: {
-      parse: [],
-      users: [member.id],
-    },
-    ephemeral: false,
-  });
-  await interaction.editReply({
     embeds: [
-      successEmbed(
-        "Absence annoncée",
-        "Ton absence a été publiée dans ce salon.",
-      ),
+      dmSent
+        ? successEmbed(
+            "Absence terminée",
+            "Le statut a été mis à jour et un message privé t'a été envoyé.",
+          )
+        : errorEmbed(
+            "Absence terminée",
+            "Le statut a été mis à jour, mais je n'ai pas pu t'envoyer de DM. Vérifie tes paramètres de confidentialité.",
+          ),
     ],
+    ephemeral: true,
   });
 }
 
@@ -1776,6 +1938,14 @@ export async function startDiscordBot(token: string): Promise<void> {
         } else if (interaction.commandName === RANK_DERANK_COMMAND_NAME) {
           await handleRoleActionCommand(interaction);
         }
+        return;
+      }
+
+      if (
+        interaction.isButton() &&
+        interaction.customId.startsWith(STAFF_ABSENCE_FINISH_BUTTON_PREFIX)
+      ) {
+        await handleStaffAbsenceFinishButton(interaction);
         return;
       }
 

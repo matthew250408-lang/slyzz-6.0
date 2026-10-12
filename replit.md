@@ -40,7 +40,7 @@ Bot Discord configurable pour gérer le recrutement, les conversations de modmai
 - Les candidats envoient leur candidature via un formulaire Discord.
 - Members can open support conversations through modmail; moderators can claim, reply, and close conversations.
 - Authorized users can publish custom embeds with `/message`; `/info-bot` displays the bot version, developer, and last-modified date; `/info-serveur` summarizes the current server.
-- `/absence-staff date_debut date_fin raison` announces the invoking staff member's absence. Only members with role `1429508546550038648` can use it.
+- `/absence-staff date_debut date_fin raison` announces the invoking staff member's absence in channel `1559248976694353960`, mentioning them. Only members with role `1429508546550038648` can use it. The embed starts as `En cours...`; its creator alone can click `Terminer maintenant`, which marks it `Terminé` and triggers a DM.
 - `/rank-derank` lets an authorized user choose `rank` or `derank`, changes the configured role, and posts an announcement embed in the configured announcement channel.
 
 ### Custom embeds
@@ -64,7 +64,8 @@ The command is limited to the primary administrators and users authorized for th
 ### Recrutement et absences
 
 - `/setup-inscription` conserve son nom pour compatibilité, mais configure le formulaire de recrutement. Il permet de personnaliser le message, le titre, le bouton, jusqu'à cinq questions et le salon qui reçoit les candidatures. Les questions de motivation, d'expérience, de disponibilité et de gestion des conflits sont proposées avec les questions personnalisées.
-- `/absence-staff date_debut date_fin raison` publie dans le salon courant un embed rose avec le membre qui lance la commande, son rôle le plus élevé, les dates au format `JJ/MM/AAAA` et la raison.
+- `/absence-staff date_debut date_fin raison` publie dans le salon `1559248976694353960` un embed rose qui mentionne le membre qui lance la commande et affiche son rôle le plus élevé, les dates au format `JJ/MM/AAAA`, la raison et le statut `En cours...`.
+- Seul l'auteur de l'absence peut utiliser le bouton `Terminer maintenant`. Le bot passe le statut à `Terminé`, désactive le bouton et lui envoie un DM. Si ses paramètres Discord bloquent les DM, le statut est tout de même mis à jour et le bot l'indique.
 - `/info-serveur` affiche le propriétaire, le nombre de membres, les dates et les principaux compteurs du serveur.
 
 ## User preferences
